@@ -1,0 +1,21 @@
+_format_version: "3.0"
+
+services:
+  - name: version-gate-demo-service
+    url: http://httpbin.org
+    routes:
+      - name: version-gate-demo-route
+        paths:
+          - /version-gate-demo
+        plugins:
+          - name: version-gate
+            config:
+              enabled: true
+              mode: annotate
+              expected_source_strategy: header
+              actual_source_strategy: header
+              expected_header_name: x-expected-version
+              actual_header_name: x-actual-version
+              reject_status_code: 409
+              emit_sample_rate: 1.0
+              emit_format: logfmt

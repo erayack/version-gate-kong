@@ -117,6 +117,34 @@ services:
    set `KONG_PLUGINS=bundled,version-gate`
 4. Restart Kong.
 
+## Custom Kong Image (Recommended For Teams)
+
+Use `examples/Dockerfile` to bake the plugin into a deployable Kong image.
+
+Build:
+
+```bash
+docker build -f examples/Dockerfile -t kong-version-gate:3.8.0 .
+```
+
+Run (DB-less example):
+
+```bash
+docker run --rm -p 8000:8000 -p 8001:8001 \
+  -e KONG_DATABASE=off \
+  -e KONG_DECLARATIVE_CONFIG=/kong/declarative/kong.yaml \
+  -e KONG_PROXY_LISTEN=0.0.0.0:8000 \
+  -e KONG_ADMIN_LISTEN=0.0.0.0:8001 \
+  -v "$(pwd)/examples/kong-declarative-version-gate.yaml:/kong/declarative/kong.yaml:ro" \
+  kong-version-gate:3.8.0
+```
+
+Verify plugin is enabled:
+
+```bash
+curl -sS http://localhost:8001/plugins/enabled | grep -i version-gate
+```
+
 ## Registration Readiness Checklist
 
 - Rockspec dependency range and plugin modules are correct (`kong-plugin-version-gate-0.1.0-1.rockspec`).
@@ -129,8 +157,55 @@ services:
 
 1. Ensure the plugin is enabled in Kong: `KONG_PLUGINS=bundled,version-gate`.
 2. Restart Kong and confirm startup is clean.
-3. Create plugin config on a Route/Service (declarative or Admin API).
+3. Register via one of the methods below.
 4. Send a request that should violate (`actual < expected`) and verify expected behavior for your mode (`shadow`, `annotate`, or `reject`).
+
+### Method A: Declarative (DB-less or decK)
+
+Use `examples/kong-declarative-version-gate.yaml`.
+
+If Kong runs in DB-less mode, point `KONG_DECLARATIVE_CONFIG` to that file.
+
+If using decK:
+
+```bash
+deck gateway sync examples/kong-declarative-version-gate.yaml
+```
+
+### Method B: Admin API
+
+Create Service and Route:
+
+```bash
+curl -sS -X POST http://localhost:8001/services \
+  --data name=version-gate-demo-service \
+  --data url=http://httpbin.org
+
+curl -sS -X POST http://localhost:8001/services/version-gate-demo-service/routes \
+  --data name=version-gate-demo-route \
+  --data paths[]=/version-gate-demo
+```
+
+Attach plugin to the Route:
+
+```bash
+curl -sS -X POST http://localhost:8001/routes/version-gate-demo-route/plugins \
+  --data name=version-gate \
+  --data config.enabled=true \
+  --data config.mode=annotate \
+  --data config.expected_source_strategy=header \
+  --data config.actual_source_strategy=header \
+  --data config.expected_header_name=x-expected-version \
+  --data config.actual_header_name=x-actual-version \
+  --data config.reject_status_code=409
+```
+
+Quick verification (annotate mode should return decision headers):
+
+```bash
+curl -i "http://localhost:8000/version-gate-demo/response-headers?x-actual-version=5" \
+  -H "x-expected-version: 10"
+```
 
 ## Testing (Pongo)
 
