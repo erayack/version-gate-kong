@@ -110,12 +110,14 @@ services:
 
 ## Install
 
-1. Build/install the rock:
-   `luarocks make kong-plugin-version-gate-0.1.0-1.rockspec`
-2. If using shared-dict state store, define an Nginx shared dict (for example `lua_shared_dict version_gate_state 10m;`).
-3. Enable plugin:
+1. Install from LuaRocks (recommended):
+   `luarocks install kong-plugin-version-gate 0.1.0-2`
+2. Optional (build from local source instead):
+   `luarocks make kong-plugin-version-gate-0.1.0-2.rockspec`
+3. If using shared-dict state store, define an Nginx shared dict (for example `lua_shared_dict version_gate_state 10m;`).
+4. Enable plugin:
    set `KONG_PLUGINS=bundled,version-gate`
-4. Restart Kong.
+5. Restart Kong.
 
 ## Custom Kong Image (Recommended For Teams)
 
