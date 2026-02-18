@@ -31,9 +31,24 @@ local function get_route_id()
 end
 
 local function get_service_id()
-  local service = kong.router.get_service()
+  local service = nil
+
+  if kong.client ~= nil and kong.client.get_service ~= nil then
+    service = kong.client.get_service()
+  elseif kong.router ~= nil and kong.router.get_service ~= nil then
+    service = kong.router.get_service()
+  end
+
   if service ~= nil then
     return service.id
+  end
+
+  return nil
+end
+
+local function get_request_id()
+  if kong.request ~= nil and kong.request.get_id ~= nil then
+    return kong.request.get_id()
   end
 
   return nil
@@ -221,7 +236,7 @@ function VersionGateHandler:access(conf)
     policy_id = resolved_policy.id,
     mode = resolved_policy.mode,
     phase = "access",
-    request_id = kong.request.get_id(),
+    request_id = get_request_id(),
     route_id = route_id,
     service_id = service_id,
     started_at = started_at,

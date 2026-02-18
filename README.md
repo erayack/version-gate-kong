@@ -2,6 +2,12 @@
 
 Kong plugin that detects monotonic-read violations by comparing an `expected` version (request-side) with an `actual` version (response-side).
 
+## Kong Compatibility
+
+- Supported by package constraint: `kong >= 3.4, < 4.0`
+- Verified in this repo integration tests: `3.8.0`
+- Optional local validation example: `KONG_VERSION=3.9.1 pongo run`
+
 ## Behavior
 
 - Decision = `VIOLATION` when `actual_version < expected_version`
@@ -105,8 +111,38 @@ services:
 ## Install
 
 1. Build/install the rock:
-   `luarocks make version-gate-0.1.0-1.rockspec`
+   `luarocks make kong-plugin-version-gate-0.1.0-1.rockspec`
 2. If using shared-dict state store, define an Nginx shared dict (for example `lua_shared_dict version_gate_state 10m;`).
 3. Enable plugin:
    set `KONG_PLUGINS=bundled,version-gate`
 4. Restart Kong.
+
+## Registration Readiness Checklist
+
+- Rockspec dependency range and plugin modules are correct (`kong-plugin-version-gate-0.1.0-1.rockspec`).
+- Plugin name is aligned everywhere: `version-gate` (`schema.name`, config, and `KONG_PLUGINS`).
+- Integration tests pass against pinned Kong:  
+  `KONG_VERSION=3.8.0 /Users/erayack/.kong-pongo/pongo.sh run -- -v -o gtest ./spec/version-gate/10-integration_spec.lua`
+- At least one non-header extraction path is covered end-to-end (query strategy integration test included).
+
+## Register in Kong
+
+1. Ensure the plugin is enabled in Kong: `KONG_PLUGINS=bundled,version-gate`.
+2. Restart Kong and confirm startup is clean.
+3. Create plugin config on a Route/Service (declarative or Admin API).
+4. Send a request that should violate (`actual < expected`) and verify expected behavior for your mode (`shadow`, `annotate`, or `reject`).
+
+## Testing (Pongo)
+
+Pin Kong to a known compatible version (`3.8.0`) when running Pongo:
+
+```bash
+KONG_VERSION=3.8.0 pongo up
+KONG_VERSION=3.8.0 pongo run
+```
+
+Override the pin when needed:
+
+```bash
+KONG_VERSION=3.9.1 pongo run
+```

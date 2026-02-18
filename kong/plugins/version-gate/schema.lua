@@ -230,7 +230,18 @@ return {
   entity_checks = {
     {
       custom_entity_check = {
-        field_sources = { "config.expected_source_strategy", "config.actual_source_strategy" },
+        field_sources = {
+          "config.expected_source_strategy",
+          "config.actual_source_strategy",
+          "config.expected_header_name",
+          "config.actual_header_name",
+          "config.expected_query_param_name",
+          "config.actual_query_param_name",
+          "config.expected_jwt_claim_name",
+          "config.actual_jwt_claim_name",
+          "config.expected_cookie_name",
+          "config.actual_cookie_name",
+        },
         fn = function(entity)
           return validate_strategy_bindings(entity.config or {})
         end,

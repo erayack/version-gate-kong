@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Pongo/Kong runtime output
+servroot/
+.containerid
+bin/pongo
+
+# Test and coverage artifacts
+luacov.*.out
+*.gcov
+
+# Busted/JUnit-style output files (if redirected locally)
+test-results.xml
+*.busted.out
