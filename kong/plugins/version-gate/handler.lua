@@ -3,6 +3,7 @@ local VersionGateHandler = {
   VERSION = "0.1.0",
 }
 
+local constants = require("kong.plugins.version-gate.constants")
 local ctx = require("kong.plugins.version-gate.ctx")
 local decision_engine = require("kong.plugins.version-gate.decision_engine")
 local enforcement = require("kong.plugins.version-gate.enforcement")
@@ -31,6 +32,67 @@ local function get_service_id()
   local service = kong.router.get_service()
   if service ~= nil then
     return service.id
+  end
+
+  return nil
+end
+
+local function emit_violation_warning(decision_ctx)
+  if decision_ctx.decision ~= constants.DECISION_VIOLATION then
+    return
+  end
+
+  kong.log.warn(
+    "[version-gate] violation detected",
+    " reason=", tostring(decision_ctx.reason),
+    " request_id=", tostring(decision_ctx.request_id),
+    " route_id=", tostring(decision_ctx.route_id),
+    " service_id=", tostring(decision_ctx.service_id),
+    " expected_version=", tostring(decision_ctx.expected_version),
+    " actual_version=", tostring(decision_ctx.actual_version),
+    " started_at=", tostring(decision_ctx.started_at),
+    " latency_ms=", tostring(decision_ctx.latency_ms)
+  )
+end
+
+local function should_warn_violation(decision_ctx, policy)
+  if decision_ctx.decision ~= constants.DECISION_VIOLATION then
+    return false
+  end
+
+  local reason = decision_ctx.reason
+  if reason == nil then
+    return true
+  end
+
+  local enforce_on_reason = policy and policy.enforce_on_reason
+  if type(enforce_on_reason) ~= "table" then
+    return reason == constants.REASON_INVARIANT_VIOLATION
+  end
+
+  for i = 1, #enforce_on_reason do
+    if enforce_on_reason[i] == reason then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function apply_enforcement_result(result)
+  if type(result) ~= "table" then
+    return nil
+  end
+
+  local response = kong.response
+  if type(result.headers) == "table" and response ~= nil and response.set_header ~= nil then
+    for k, v in pairs(result.headers) do
+      response.set_header(k, v)
+    end
+  end
+
+  if result.action == constants.ACTION_REJECT and response ~= nil and response.exit ~= nil then
+    return response.exit(result.status or 409, result.body, result.headers)
   end
 
   return nil
@@ -87,19 +149,12 @@ function VersionGateHandler:header_filter(conf)
   )
   ctx.set_decision(plugin_ctx, decision, reason)
 
-  enforcement.handle(conf, ctx.snapshot(plugin_ctx), function(message, decision_ctx)
-    kong.log.warn(
-      message,
-      " reason=", tostring(decision_ctx.reason),
-      " request_id=", tostring(decision_ctx.request_id),
-      " route_id=", tostring(decision_ctx.route_id),
-      " service_id=", tostring(decision_ctx.service_id),
-      " expected_version=", tostring(decision_ctx.expected_version),
-      " actual_version=", tostring(decision_ctx.actual_version),
-      " started_at=", tostring(decision_ctx.started_at),
-      " latency_ms=", tostring(decision_ctx.latency_ms)
-    )
-  end, plugin_ctx.policy)
+  local decision_ctx = ctx.snapshot(plugin_ctx)
+  local enforcement_result = enforcement.handle(conf, decision_ctx, plugin_ctx.policy)
+  if should_warn_violation(decision_ctx, plugin_ctx.policy) then
+    emit_violation_warning(decision_ctx)
+  end
+  return apply_enforcement_result(enforcement_result)
 end
 
 function VersionGateHandler:log(conf)

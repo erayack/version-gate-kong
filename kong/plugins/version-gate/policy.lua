@@ -68,19 +68,6 @@ local function default_policy(conf)
   }
 end
 
-local function from_map(policy_map, key)
-  if type(policy_map) ~= "table" then
-    return nil
-  end
-
-  local candidate = policy_map[key]
-  if type(candidate) ~= "table" then
-    return nil
-  end
-
-  return candidate
-end
-
 local function merge_policy(base, override)
   if type(override) ~= "table" then
     return base
@@ -118,6 +105,43 @@ local function merge_policy(base, override)
   return merged
 end
 
+local function find_override(policy_overrides, target_type, target_id)
+  if type(policy_overrides) ~= "table" then
+    return nil
+  end
+
+  if type(target_type) ~= "string" or type(target_id) ~= "string" then
+    return nil
+  end
+
+  local merged = nil
+
+  for i = 1, #policy_overrides do
+    local candidate = policy_overrides[i]
+    if
+      type(candidate) == "table"
+      and candidate.target_type == target_type
+      and candidate.target_id == target_id
+    then
+      if merged == nil then
+        merged = {}
+      end
+
+      for k, v in pairs(candidate) do
+        if k ~= "target_type" and k ~= "target_id" then
+          if k == "enforce_on_reason" and is_array(v) then
+            merged[k] = copy_array(v)
+          else
+            merged[k] = v
+          end
+        end
+      end
+    end
+  end
+
+  return merged
+end
+
 ---Resolves an effective policy for the current request scope.
 ---@param conf table|nil
 ---@param route_id string|nil
@@ -126,13 +150,14 @@ end
 function _M.resolve_policy(conf, route_id, service_id)
   local resolved = default_policy(conf)
   conf = conf or {}
+  local policy_overrides = conf.policy_overrides
 
   if service_id ~= nil then
-    resolved = merge_policy(resolved, from_map(conf.policy_by_service, service_id))
+    resolved = merge_policy(resolved, find_override(policy_overrides, "service", service_id))
   end
 
   if route_id ~= nil then
-    resolved = merge_policy(resolved, from_map(conf.policy_by_route, route_id))
+    resolved = merge_policy(resolved, find_override(policy_overrides, "route", route_id))
   end
 
   return resolved

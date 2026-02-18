@@ -2,14 +2,30 @@ local constants = require("kong.plugins.version-gate.constants")
 
 local _M = {}
 
+local REJECT_BODY_TEMPLATES = {
+  default = function(decision_ctx)
+    return {
+      message = "version gate violation",
+      decision = decision_ctx.decision,
+      reason = decision_ctx.reason,
+    }
+  end,
+  minimal = function(decision_ctx)
+    return {
+      error = "version gate violation",
+      reason = decision_ctx.reason,
+    }
+  end,
+}
+
 --[[
 Enforcement interface for decision outcomes.
 
 Current PoC behavior is intentionally log-only. It does not mutate request/response
 or terminate traffic.
 
-Future-safe mode shape (not implemented yet):
-  mode = "log" | "reject" | "retry" | "reroute"
+Returns explicit enforcement instructions for handler execution:
+  { action="none"|"annotate"|"reject", status=number|nil, body=table|string|nil, headers=table|nil }
 ]]
 
 local function resolve_mode(conf, decision_ctx, policy)
@@ -36,8 +52,49 @@ local function resolve_mode(conf, decision_ctx, policy)
   return "shadow"
 end
 
-local function is_tier0_shadow_behavior_mode(mode)
-  return mode == "shadow" or mode == "annotate" or mode == "reject"
+local function should_enforce_mode(mode)
+  return mode == "annotate" or mode == "reject"
+end
+
+local function resolve_reject_status(conf, policy)
+  local status = policy and policy.reject_status_code
+  if type(status) ~= "number" then
+    status = conf and conf.reject_status_code
+  end
+  if type(status) ~= "number" then
+    status = 409
+  end
+  return status
+end
+
+local function build_annotation_headers(decision_ctx, mode)
+  return {
+    [constants.HEADER_DECISION] = tostring(decision_ctx.decision),
+    [constants.HEADER_REASON] = tostring(decision_ctx.reason),
+    [constants.HEADER_MODE] = tostring(mode),
+  }
+end
+
+local function resolve_reject_template(conf, policy)
+  local template = policy and policy.reject_body_template
+  if type(template) ~= "string" then
+    template = conf and conf.reject_body_template
+  end
+
+  if type(template) ~= "string" then
+    return "default"
+  end
+
+  if REJECT_BODY_TEMPLATES[template] == nil then
+    return "default"
+  end
+
+  return template
+end
+
+local function build_reject_body(conf, policy, decision_ctx)
+  local template = resolve_reject_template(conf, policy)
+  return REJECT_BODY_TEMPLATES[template](decision_ctx)
 end
 
 local function should_enforce_reason(policy, reason)
@@ -62,25 +119,48 @@ end
 ---Handles enforcement for a version-gate decision.
 ---@param conf table|nil
 ---@param decision_ctx table|nil
----@param emit_warning function|nil
 ---@param policy table|nil
----@return nil
-function _M.handle(conf, decision_ctx, emit_warning, policy)
+---@return table
+function _M.handle(conf, decision_ctx, policy)
   conf = conf or {}
   decision_ctx = decision_ctx or {}
   policy = policy or {}
   local mode = resolve_mode(conf, decision_ctx, policy)
 
-  -- Tier 0 keeps all modes fail-open with shadow-style warning emission.
-  if decision_ctx.decision == constants.DECISION_VIOLATION
-    and should_enforce_reason(policy, decision_ctx.reason)
-    and is_tier0_shadow_behavior_mode(mode)
-    and emit_warning ~= nil
-  then
-    emit_warning("[version-gate] violation detected", decision_ctx)
+  local result = {
+    action = constants.ACTION_NONE,
+    status = nil,
+    body = nil,
+    headers = nil,
+  }
+
+  if decision_ctx.decision ~= constants.DECISION_VIOLATION then
+    return result
   end
 
-  return nil
+  if not should_enforce_reason(policy, decision_ctx.reason) then
+    return result
+  end
+
+  if not should_enforce_mode(mode) then
+    return result
+  end
+
+  if mode == "annotate" then
+    result.action = constants.ACTION_ANNOTATE
+    result.headers = build_annotation_headers(decision_ctx, mode)
+    return result
+  end
+
+  if mode == "reject" then
+    result.action = constants.ACTION_REJECT
+    result.status = resolve_reject_status(conf, policy)
+    result.body = build_reject_body(conf, policy, decision_ctx)
+    result.headers = build_annotation_headers(decision_ctx, mode)
+    return result
+  end
+
+  return result
 end
 
 return _M
