@@ -202,6 +202,51 @@ return {
           required = false,
           custom_validator = validate_non_empty_name,
         } },
+        { state_store_redis_host = {
+          type = "string",
+          required = false,
+          custom_validator = validate_non_empty_name,
+        } },
+        { state_store_redis_port = {
+          type = "integer",
+          required = true,
+          default = 6379,
+          between = { 1, 65535 },
+        } },
+        { state_store_redis_password = {
+          type = "string",
+          required = false,
+        } },
+        { state_store_redis_database = {
+          type = "integer",
+          required = true,
+          default = 0,
+          between = { 0, 1024 },
+        } },
+        { state_store_redis_timeout_ms = {
+          type = "integer",
+          required = true,
+          default = 100,
+          between = { 1, 60000 },
+        } },
+        { state_store_redis_keepalive_ms = {
+          type = "integer",
+          required = true,
+          default = 60000,
+          between = { 1, 3600000 },
+        } },
+        { state_store_redis_pool_size = {
+          type = "integer",
+          required = true,
+          default = 100,
+          between = { 1, 10000 },
+        } },
+        { state_store_redis_prefix = {
+          type = "string",
+          required = true,
+          default = "version-gate:state",
+          custom_validator = validate_non_empty_name,
+        } },
         { reject_status_code = {
           type = "integer",
           required = true,

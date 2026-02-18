@@ -42,6 +42,7 @@ Subject key resolution:
 State store options:
 - shared dict (`state_store_dict_name`, default `version_gate_state`)
 - optional adapter module (`state_store_adapter_module`)
+- built-in Redis adapter module (`kong.plugins.version-gate.state_store_redis`)
 
 ## Config (Common)
 
@@ -78,7 +79,48 @@ config:
   state_store_dict_name: version_gate_state
   state_store_ttl_sec: 30
   # state_store_adapter_module: my.custom.state_store_adapter
+  # state_store_adapter_module: kong.plugins.version-gate.state_store_redis
+  # state_store_redis_host: redis.default.svc.cluster.local
+  # state_store_redis_port: 6379
+  # state_store_redis_password: ""
+  # state_store_redis_database: 0
+  # state_store_redis_timeout_ms: 100
+  # state_store_redis_keepalive_ms: 60000
+  # state_store_redis_pool_size: 100
+  # state_store_redis_prefix: version-gate:state
 ```
+
+## Redis State Store Adapter
+
+Enable Redis-backed state with:
+
+```yaml
+config:
+  state_store_adapter_module: kong.plugins.version-gate.state_store_redis
+  state_store_redis_host: redis.default.svc.cluster.local
+```
+
+Resolution precedence is `plugin config > env var > built-in default`.
+
+Supported environment variables:
+- `KONG_REDIS_HOST`
+- `KONG_REDIS_PORT`
+- `KONG_REDIS_PASSWORD`
+- `KONG_REDIS_DATABASE`
+- `KONG_REDIS_TIMEOUT_MS`
+- `KONG_REDIS_KEEPALIVE_MS`
+- `KONG_REDIS_POOL_SIZE`
+- `KONG_REDIS_PREFIX`
+- `KONG_REDIS_TTL_SEC`
+
+Redis key shape:
+- key: `<state_store_redis_prefix>:<subject_key>`
+- fields: `version`, `ts_ms` (via hash operations)
+- ttl: `state_store_ttl_sec`
+
+Failure behavior:
+- Redis failures are fail-open for availability.
+- If Redis read/write fails, `state_store.lua` falls back to shared dict when configured.
 
 ## Example (Declarative Config)
 
@@ -111,9 +153,9 @@ services:
 ## Install
 
 1. Install from LuaRocks (recommended):
-   `luarocks install kong-plugin-version-gate 0.1.0-2`
+   `luarocks install kong-plugin-version-gate 0.1.0-3`
 2. Optional (build from local source instead):
-   `luarocks make kong-plugin-version-gate-0.1.0-2.rockspec`
+   `luarocks make kong-plugin-version-gate-0.1.0-3.rockspec`
 3. If using shared-dict state store, define an Nginx shared dict (for example `lua_shared_dict version_gate_state 10m;`).
 4. Enable plugin:
    set `KONG_PLUGINS=bundled,version-gate`
@@ -149,7 +191,7 @@ curl -sS http://localhost:8001/plugins/enabled | grep -i version-gate
 
 ## Registration Readiness Checklist
 
-- Rockspec dependency range and plugin modules are correct (`kong-plugin-version-gate-0.1.0-1.rockspec`).
+- Rockspec dependency range and plugin modules are correct (`kong-plugin-version-gate-0.1.0-3.rockspec`).
 - Plugin name is aligned everywhere: `version-gate` (`schema.name`, config, and `KONG_PLUGINS`).
 - Integration tests pass against pinned Kong:  
   `KONG_VERSION=3.8.0 /Users/erayack/.kong-pongo/pongo.sh run -- -v -o gtest ./spec/version-gate/10-integration_spec.lua`
@@ -211,15 +253,29 @@ curl -i "http://localhost:8000/version-gate-demo/response-headers?x-actual-versi
 
 ## Testing (Pongo)
 
-Pin Kong to a known compatible version (`3.8.0`) when running Pongo:
+Test suite separation:
+
+- Local `busted` (default or `--run unit`) runs unit specs only.
+- Integration specs are separate and require Pongo/Kong runtime.
+
+Unit (local):
 
 ```bash
-KONG_VERSION=3.8.0 pongo up
-KONG_VERSION=3.8.0 pongo run
+busted
+# or
+busted --run unit
+```
+
+Integration (Pongo), pinned to known compatible version (`3.8.0`):
+
+```bash
+PONGO_BIN="${PONGO_BIN:-$HOME/.kong-pongo/pongo.sh}"
+KONG_VERSION=3.8.0 "$PONGO_BIN" run -- --run integration
 ```
 
 Override the pin when needed:
 
 ```bash
-KONG_VERSION=3.9.1 pongo run
+PONGO_BIN="${PONGO_BIN:-$HOME/.kong-pongo/pongo.sh}"
+KONG_VERSION=3.9.1 "$PONGO_BIN" run -- --run integration
 ```

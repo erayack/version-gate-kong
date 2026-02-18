@@ -54,7 +54,7 @@ local function resolve_adapter(conf)
   return adapter
 end
 
-local function adapter_get(adapter, subject_key)
+local function adapter_get(adapter, subject_key, conf)
   if type(adapter) ~= "table" or type(adapter.get_last_seen) ~= "function" then
     return nil, nil
   end
@@ -71,14 +71,14 @@ local function adapter_get(adapter, subject_key)
     return version, ts_ms
   end
 
-  local ok_with_self, version_with_self, ts_with_self = pcall(adapter.get_last_seen, adapter, subject_key)
+  local ok_with_self, version_with_self, ts_with_self = pcall(adapter.get_last_seen, adapter, subject_key, conf)
   if ok_with_self then
     version_with_self, ts_with_self = normalize(version_with_self, ts_with_self)
   else
     version_with_self, ts_with_self = nil, nil
   end
 
-  local ok_without_self, version_without_self, ts_without_self = pcall(adapter.get_last_seen, subject_key)
+  local ok_without_self, version_without_self, ts_without_self = pcall(adapter.get_last_seen, subject_key, conf)
   if ok_without_self then
     version_without_self, ts_without_self = normalize(version_without_self, ts_without_self)
   else
@@ -104,17 +104,17 @@ local function adapter_get(adapter, subject_key)
   return nil, nil
 end
 
-local function adapter_set(adapter, subject_key, version, ts_ms)
+local function adapter_set(adapter, subject_key, version, ts_ms, conf)
   if type(adapter) ~= "table" or type(adapter.set_last_seen) ~= "function" then
     return false
   end
 
-  local ok, did_set = pcall(adapter.set_last_seen, subject_key, version, ts_ms)
+  local ok, did_set = pcall(adapter.set_last_seen, subject_key, version, ts_ms, conf)
   if ok then
     return did_set == true
   end
 
-  ok, did_set = pcall(adapter.set_last_seen, adapter, subject_key, version, ts_ms)
+  ok, did_set = pcall(adapter.set_last_seen, adapter, subject_key, version, ts_ms, conf)
   if not ok then
     return false
   end
@@ -166,7 +166,7 @@ function _M.get_last_seen(subject_key, conf)
   end
 
   local adapter = resolve_adapter(conf)
-  local version, ts_ms = adapter_get(adapter, subject_key)
+  local version, ts_ms = adapter_get(adapter, subject_key, conf)
   if version ~= nil or ts_ms ~= nil then
     return version, ts_ms
   end
@@ -197,7 +197,7 @@ function _M.set_last_seen(subject_key, version, ts_ms, conf)
   end
 
   local adapter = resolve_adapter(conf)
-  if adapter_set(adapter, subject_key, version, ts_ms) then
+  if adapter_set(adapter, subject_key, version, ts_ms, conf) then
     return true
   end
 

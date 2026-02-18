@@ -1,9 +1,9 @@
 package = "kong-plugin-version-gate"
-version = "0.1.0-2"
+version = "0.1.0-3"
 
 source = {
   url = "git://github.com/erayack/version-gate-kong",
-  tag = "v0.1.0-1",
+  tag = "v0.1.0-3",
 }
 
 description = {

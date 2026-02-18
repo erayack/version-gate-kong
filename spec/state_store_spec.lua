@@ -118,4 +118,37 @@ describe("state_store", function()
     assert.equals(45, captured_ttl[1])
     assert.equals(45, captured_ttl[2])
   end)
+
+  it("passes plugin conf to adapter methods", function()
+    local captured_get_conf
+    local captured_set_conf
+    local adapter = {
+      get_last_seen = function(self, subject_key, conf)
+        self[subject_key] = self[subject_key] or "33"
+        captured_get_conf = conf
+        return self[subject_key], 6543
+      end,
+      set_last_seen = function(self, subject_key, version, ts_ms, conf)
+        self[subject_key] = version
+        self._ts_ms = ts_ms
+        captured_set_conf = conf
+        return true
+      end,
+    }
+
+    local state_store = require("kong.plugins.version-gate.state_store")
+    local conf = {
+      state_store_adapter = adapter,
+      state_store_redis_host = "redis.internal",
+    }
+
+    local ok = state_store.set_last_seen("route:conf", "44", 7654, conf)
+    local version, ts_ms = state_store.get_last_seen("route:conf", conf)
+
+    assert.is_true(ok)
+    assert.equals("44", version)
+    assert.equals(6543, ts_ms)
+    assert.same(conf, captured_get_conf)
+    assert.same(conf, captured_set_conf)
+  end)
 end)

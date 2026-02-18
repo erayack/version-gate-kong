@@ -3,5 +3,20 @@ return {
     verbose = true,
     coverage = false,
     output = "gtest",
+    pattern = "_spec.lua$",
+    ["exclude-pattern"] = "integration",
+  },
+  unit = {
+    verbose = true,
+    coverage = false,
+    output = "gtest",
+    pattern = "_spec.lua$",
+    ["exclude-pattern"] = "integration",
+  },
+  integration = {
+    verbose = true,
+    coverage = false,
+    output = "gtest",
+    pattern = "integration.*_spec.lua$",
   },
 }
