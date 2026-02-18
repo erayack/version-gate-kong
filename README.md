@@ -17,7 +17,8 @@ Current mode is fail-open and log-only.
 ```yaml
 config:
   enabled: true
-  log_only: true
+  mode: shadow
+  log_only: true # deprecated compatibility field
   expected_header_name: x-expected-version
   actual_header_name: x-actual-version
 ```
@@ -38,7 +39,8 @@ services:
           - name: version-gate
             config:
               enabled: true
-              log_only: true
+              mode: shadow
+              log_only: true # deprecated compatibility field
               expected_header_name: x-expected-version
               actual_header_name: x-actual-version
 ```
@@ -50,4 +52,3 @@ services:
 2. Enable plugin:
    set `KONG_PLUGINS=bundled,version-gate`
 3. Restart Kong.
-
