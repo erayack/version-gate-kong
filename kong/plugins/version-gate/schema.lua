@@ -1,9 +1,11 @@
 local typedefs = require("kong.db.schema.typedefs")
 local constants = require("kong.plugins.version-gate.constants")
 
-local function validate_non_empty_header_name(value)
+local SOURCE_STRATEGIES = { "header", "query", "jwt_claim", "cookie" }
+
+local function validate_non_empty_name(value)
   if type(value) ~= "string" or value:match("^%s*$") then
-    return nil, "must be a non-empty header name"
+    return nil, "must be a non-empty name"
   end
 
   return true
@@ -16,6 +18,43 @@ local function validate_uuid(value)
 
   if not value:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then
     return nil, "must be a valid UUID"
+  end
+
+  return true
+end
+
+local STRATEGY_TO_FIELD = {
+  header = { expected = "expected_header_name", actual = "actual_header_name" },
+  query = { expected = "expected_query_param_name", actual = "actual_query_param_name" },
+  jwt_claim = { expected = "expected_jwt_claim_name", actual = "actual_jwt_claim_name" },
+  cookie = { expected = "expected_cookie_name", actual = "actual_cookie_name" },
+}
+
+local function validate_strategy_name(conf, strategy_key, side)
+  local strategy = conf[strategy_key]
+  local strategy_fields = STRATEGY_TO_FIELD[strategy]
+  if strategy_fields == nil then
+    return true
+  end
+
+  local field_name = strategy_fields[side]
+  local configured_name = conf[field_name]
+  if type(configured_name) ~= "string" or configured_name:match("^%s*$") then
+    return nil, field_name .. " must be a non-empty name when " .. strategy_key .. "=" .. strategy
+  end
+
+  return true
+end
+
+local function validate_strategy_bindings(conf)
+  local ok, err = validate_strategy_name(conf, "expected_source_strategy", "expected")
+  if not ok then
+    return nil, err
+  end
+
+  ok, err = validate_strategy_name(conf, "actual_source_strategy", "actual")
+  if not ok then
+    return nil, err
   end
 
   return true
@@ -74,19 +113,94 @@ return {
           type = "string",
           required = true,
           default = "x-expected-version",
-          custom_validator = validate_non_empty_header_name,
+          custom_validator = validate_non_empty_name,
         } },
         { actual_header_name = {
           type = "string",
           required = true,
           default = "x-actual-version",
-          custom_validator = validate_non_empty_header_name,
+          custom_validator = validate_non_empty_name,
+        } },
+        { expected_source_strategy = {
+          type = "string",
+          required = true,
+          default = "header",
+          one_of = SOURCE_STRATEGIES,
+        } },
+        { actual_source_strategy = {
+          type = "string",
+          required = true,
+          default = "header",
+          one_of = SOURCE_STRATEGIES,
+        } },
+        { expected_query_param_name = {
+          type = "string",
+          required = true,
+          default = "expected_version",
+          custom_validator = validate_non_empty_name,
+        } },
+        { actual_query_param_name = {
+          type = "string",
+          required = true,
+          default = "actual_version",
+          custom_validator = validate_non_empty_name,
+        } },
+        { expected_jwt_claim_name = {
+          type = "string",
+          required = true,
+          default = "expected_version",
+          custom_validator = validate_non_empty_name,
+        } },
+        { actual_jwt_claim_name = {
+          type = "string",
+          required = true,
+          default = "actual_version",
+          custom_validator = validate_non_empty_name,
+        } },
+        { expected_cookie_name = {
+          type = "string",
+          required = true,
+          default = "expected_version",
+          custom_validator = validate_non_empty_name,
+        } },
+        { actual_cookie_name = {
+          type = "string",
+          required = true,
+          default = "actual_version",
+          custom_validator = validate_non_empty_name,
         } },
         { emit_sample_rate = {
           type = "number",
           required = true,
           default = 1,
           between = { 0, 1 },
+        } },
+        { state_suppression_window_ms = {
+          type = "integer",
+          required = true,
+          default = 0,
+          between = { 0, 3600000 },
+        } },
+        { state_subject_header_name = {
+          type = "string",
+          required = false,
+          custom_validator = validate_non_empty_name,
+        } },
+        { state_store_dict_name = {
+          type = "string",
+          required = false,
+          custom_validator = validate_non_empty_name,
+        } },
+        { state_store_ttl_sec = {
+          type = "integer",
+          required = true,
+          default = 30,
+          between = { 1, 86400 },
+        } },
+        { state_store_adapter_module = {
+          type = "string",
+          required = false,
+          custom_validator = validate_non_empty_name,
         } },
         { reject_status_code = {
           type = "integer",
@@ -112,5 +226,15 @@ return {
         } },
       },
     } },
+  },
+  entity_checks = {
+    {
+      custom_entity_check = {
+        field_sources = { "config.expected_source_strategy", "config.actual_source_strategy" },
+        fn = function(entity)
+          return validate_strategy_bindings(entity.config or {})
+        end,
+      },
+    },
   },
 }

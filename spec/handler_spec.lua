@@ -34,11 +34,36 @@ describe("handler.log", function()
       handle = function() end,
     }
     package.loaded["kong.plugins.version-gate.version_extractor"] = {
+      get_expected_raw = function()
+        return nil
+      end,
+      get_actual_raw = function()
+        return nil
+      end,
+      parse_version = function(raw)
+        if raw == nil then
+          return nil, nil
+        end
+
+        return tostring(raw), nil
+      end,
       get_expected_version = function()
         return nil, nil
       end,
       get_actual_version = function()
         return nil, nil
+      end,
+    }
+    package.loaded["kong.plugins.version-gate.state_store"] = {
+      new = function()
+        return {
+          get_last_seen = function()
+            return nil, nil
+          end,
+          set_last_seen = function()
+            return true
+          end,
+        }
       end,
     }
 
@@ -62,6 +87,7 @@ describe("handler.log", function()
     package.loaded["kong.plugins.version-gate.decision_engine"] = nil
     package.loaded["kong.plugins.version-gate.enforcement"] = nil
     package.loaded["kong.plugins.version-gate.version_extractor"] = nil
+    package.loaded["kong.plugins.version-gate.state_store"] = nil
   end)
 
   it("applies resolved policy emit_sample_rate for observability emission", function()
@@ -87,6 +113,13 @@ describe("handler.header_filter", function()
   local captured_warns
   local enforcement_result
   local decision_snapshot
+  local store_last_seen_version
+  local store_last_seen_ts_ms
+  local store_last_seen_key
+  local store_write_calls
+  local store_written
+  local parse_inputs
+  local actual_raw_calls
 
   before_each(function()
     saved_kong = _G.kong
@@ -99,11 +132,23 @@ describe("handler.header_filter", function()
       decision = "VIOLATION",
       reason = "INVARIANT_VIOLATION",
     }
+    store_last_seen_version = nil
+    store_last_seen_ts_ms = nil
+    store_last_seen_key = nil
+    store_write_calls = 0
+    store_written = nil
+    parse_inputs = {}
+    actual_raw_calls = 0
 
     package.loaded["kong.plugins.version-gate.handler"] = nil
     package.loaded["kong.plugins.version-gate.ctx"] = {
-      set_actual = function() end,
-      set_decision = function() end,
+      set_actual = function(_, _, parsed_value)
+        decision_snapshot.actual_version = parsed_value
+      end,
+      set_decision = function(_, decision, reason)
+        decision_snapshot.decision = decision
+        decision_snapshot.reason = reason
+      end,
       snapshot = function()
         return decision_snapshot
       end,
@@ -127,15 +172,44 @@ describe("handler.header_filter", function()
       end,
     }
     package.loaded["kong.plugins.version-gate.version_extractor"] = {
-      get_expected_version = function()
-        return nil, nil
+      get_expected_raw = function()
+        return nil
       end,
-      get_actual_version = function()
-        return "10", nil
+      get_actual_raw = function()
+        actual_raw_calls = actual_raw_calls + 1
+        return "10"
+      end,
+      parse_version = function(raw, parse_error_reason)
+        parse_inputs[#parse_inputs + 1] = raw
+        if raw == nil then
+          return nil, nil
+        end
+
+        local value = tostring(raw)
+        if not value:match("^%d+$") then
+          return nil, parse_error_reason
+        end
+
+        return value:gsub("^0+", "") ~= "" and value:gsub("^0+", "") or "0", nil
       end,
     }
     package.loaded["kong.plugins.version-gate.observability"] = {
       emit = function() end,
+    }
+    package.loaded["kong.plugins.version-gate.state_store"] = {
+      new = function()
+        return {
+          get_last_seen = function(_, subject_key)
+            store_last_seen_key = subject_key
+            return store_last_seen_version, store_last_seen_ts_ms
+          end,
+          set_last_seen = function(_, subject_key, version, ts_ms)
+            store_write_calls = store_write_calls + 1
+            store_written = { subject_key = subject_key, version = version, ts_ms = ts_ms }
+            return true
+          end,
+        }
+      end,
     }
 
     _G.ngx = { now = function() return 1000 end }
@@ -159,6 +233,17 @@ describe("handler.header_filter", function()
         end,
         notice = function() end,
       },
+      request = {
+        get_header = function()
+          return nil
+        end,
+        get_method = function()
+          return "GET"
+        end,
+        get_path = function()
+          return "/foo"
+        end,
+      },
     }
   end)
 
@@ -172,6 +257,7 @@ describe("handler.header_filter", function()
     package.loaded["kong.plugins.version-gate.enforcement"] = nil
     package.loaded["kong.plugins.version-gate.version_extractor"] = nil
     package.loaded["kong.plugins.version-gate.observability"] = nil
+    package.loaded["kong.plugins.version-gate.state_store"] = nil
   end)
 
   it("applies annotation headers from enforcement result", function()
@@ -217,10 +303,9 @@ describe("handler.header_filter", function()
   end)
 
   it("does not warn when violation reason is excluded from enforce_on_reason", function()
-    decision_snapshot = {
-      decision = "VIOLATION",
-      reason = "MISSING_ACTUAL",
-    }
+    package.loaded["kong.plugins.version-gate.decision_engine"].classify = function()
+      return "VIOLATION", "MISSING_ACTUAL"
+    end
 
     local handler = require("kong.plugins.version-gate.handler")
 
@@ -230,5 +315,142 @@ describe("handler.header_filter", function()
     })
 
     assert.equals(0, #captured_warns)
+  end)
+
+  it("parses the extracted raw value in a single pass", function()
+    package.loaded["kong.plugins.version-gate.version_extractor"].get_actual_raw = function()
+      actual_raw_calls = actual_raw_calls + 1
+      return "0010"
+    end
+
+    local handler = require("kong.plugins.version-gate.handler")
+
+    handler:header_filter({
+      enabled = true,
+      actual_header_name = "x-version",
+      state_suppression_window_ms = 100,
+    })
+
+    assert.equals(1, actual_raw_calls)
+    assert.equals("0010", parse_inputs[1])
+  end)
+
+  it("suppresses invariant violation when last_seen is fresh and non-violating", function()
+    store_last_seen_version = "10"
+    store_last_seen_ts_ms = 1000000 - 50
+    _G.kong.ctx.plugin.expected_version = "10"
+
+    local handler = require("kong.plugins.version-gate.handler")
+
+    handler:header_filter({
+      enabled = true,
+      actual_header_name = "x-version",
+      state_suppression_window_ms = 100,
+    })
+
+    assert.equals("ALLOW", decision_snapshot.decision)
+    assert.equals("INVARIANT_OK", decision_snapshot.reason)
+    assert.equals(0, #captured_warns)
+  end)
+
+  it("does not suppress when last_seen timestamp is stale", function()
+    store_last_seen_version = "10"
+    store_last_seen_ts_ms = 1000000 - 200
+    _G.kong.ctx.plugin.expected_version = "10"
+
+    local handler = require("kong.plugins.version-gate.handler")
+
+    handler:header_filter({
+      enabled = true,
+      actual_header_name = "x-version",
+      state_suppression_window_ms = 100,
+    })
+
+    assert.equals("VIOLATION", decision_snapshot.decision)
+    assert.equals("INVARIANT_VIOLATION", decision_snapshot.reason)
+    assert.equals(1, #captured_warns)
+  end)
+
+  it("does not suppress when last_seen is still violating expected version", function()
+    store_last_seen_version = "8"
+    store_last_seen_ts_ms = 1000000 - 50
+    _G.kong.ctx.plugin.expected_version = "10"
+
+    local handler = require("kong.plugins.version-gate.handler")
+
+    handler:header_filter({
+      enabled = true,
+      actual_header_name = "x-version",
+      state_suppression_window_ms = 100,
+    })
+
+    assert.equals("VIOLATION", decision_snapshot.decision)
+    assert.equals("INVARIANT_VIOLATION", decision_snapshot.reason)
+    assert.equals(1, #captured_warns)
+  end)
+
+  it("writes state only when suppression window is enabled", function()
+    local handler = require("kong.plugins.version-gate.handler")
+
+    handler:header_filter({
+      enabled = true,
+      actual_header_name = "x-version",
+      state_suppression_window_ms = 0,
+    })
+    assert.equals(0, store_write_calls)
+
+    handler:header_filter({
+      enabled = true,
+      actual_header_name = "x-version",
+      state_suppression_window_ms = 100,
+    })
+    assert.equals(1, store_write_calls)
+    assert.equals("10", store_written.version)
+    assert.equals(1000000, store_written.ts_ms)
+  end)
+
+  it("uses subject header key before composite fallback key", function()
+    store_last_seen_version = "10"
+    store_last_seen_ts_ms = 1000000 - 50
+    _G.kong.ctx.plugin.expected_version = "10"
+    _G.kong.ctx.plugin.route_id = "route-1"
+    _G.kong.ctx.plugin.service_id = "service-1"
+    _G.kong.request.get_header = function(name)
+      if name == "x-subject" then
+        return "tenant-42"
+      end
+
+      return nil
+    end
+
+    local handler = require("kong.plugins.version-gate.handler")
+
+    handler:header_filter({
+      enabled = true,
+      actual_header_name = "x-version",
+      state_suppression_window_ms = 100,
+      state_subject_header_name = "x-subject",
+    })
+
+    assert.equals("subject:tenant-42", store_last_seen_key)
+  end)
+
+  it("uses composite subject key when subject header is missing", function()
+    store_last_seen_version = "10"
+    store_last_seen_ts_ms = 1000000 - 50
+    _G.kong.ctx.plugin.expected_version = "10"
+    _G.kong.ctx.plugin.route_id = "route-1"
+    _G.kong.ctx.plugin.service_id = "service-1"
+
+    local handler = require("kong.plugins.version-gate.handler")
+
+    handler:header_filter({
+      enabled = true,
+      actual_header_name = "x-version",
+      state_suppression_window_ms = 100,
+      state_subject_header_name = "x-subject",
+    })
+
+    assert.equals("route:route-1|service:service-1|method:GET|path:/foo", store_last_seen_key)
   end)
 end)

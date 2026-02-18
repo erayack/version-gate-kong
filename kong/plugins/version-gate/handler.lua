@@ -7,8 +7,10 @@ local constants = require("kong.plugins.version-gate.constants")
 local ctx = require("kong.plugins.version-gate.ctx")
 local decision_engine = require("kong.plugins.version-gate.decision_engine")
 local enforcement = require("kong.plugins.version-gate.enforcement")
+local invariant = require("kong.plugins.version-gate.invariant")
 local observability = require("kong.plugins.version-gate.observability")
 local policy = require("kong.plugins.version-gate.policy")
+local state_store = require("kong.plugins.version-gate.state_store")
 local version_extractor = require("kong.plugins.version-gate.version_extractor")
 
 local function is_enabled(conf)
@@ -35,6 +37,108 @@ local function get_service_id()
   end
 
   return nil
+end
+
+local function get_state_subject_key(conf, route_id, service_id)
+  conf = conf or {}
+  local request = kong.request
+  local state_subject_header_name = conf.state_subject_header_name
+
+  if
+    type(state_subject_header_name) == "string"
+    and state_subject_header_name ~= ""
+    and request ~= nil
+    and request.get_header ~= nil
+  then
+    local subject_header = request.get_header(state_subject_header_name)
+    if type(subject_header) == "string" and subject_header ~= "" then
+      return "subject:" .. subject_header
+    end
+  end
+
+  local method = "-"
+  local path = "-"
+
+  if request ~= nil and request.get_method ~= nil then
+    method = request.get_method() or method
+  end
+
+  if request ~= nil and request.get_path ~= nil then
+    path = request.get_path() or path
+  end
+
+  local route_fragment = route_id or "-"
+  local service_fragment = service_id or "-"
+  return table.concat({
+    "route:" .. route_fragment,
+    "service:" .. service_fragment,
+    "method:" .. method,
+    "path:" .. path,
+  }, "|")
+end
+
+local function should_apply_state_suppression(conf)
+  local suppression_window_ms = tonumber(conf and conf.state_suppression_window_ms)
+  if suppression_window_ms == nil or suppression_window_ms <= 0 then
+    return false, nil
+  end
+
+  return true, suppression_window_ms
+end
+
+local function maybe_suppress_violation(conf, plugin_ctx, decision, reason, expected_version, now_ts_ms)
+  if decision ~= constants.DECISION_VIOLATION or reason ~= constants.REASON_INVARIANT_VIOLATION then
+    return decision, reason
+  end
+
+  local should_suppress, suppression_window_ms = should_apply_state_suppression(conf)
+  if not should_suppress then
+    return decision, reason
+  end
+
+  local store = plugin_ctx.state_store
+  local subject_key = plugin_ctx.state_subject_key
+  if store == nil or subject_key == nil or expected_version == nil then
+    return decision, reason
+  end
+
+  local last_seen_version, last_seen_ts_ms = store:get_last_seen(subject_key)
+  plugin_ctx.last_seen_version = last_seen_version
+  plugin_ctx.last_seen_ts_ms = last_seen_ts_ms
+
+  if type(last_seen_version) ~= "string" or type(last_seen_ts_ms) ~= "number" then
+    return decision, reason
+  end
+
+  if invariant.is_violation(expected_version, last_seen_version) then
+    return decision, reason
+  end
+
+  if (now_ts_ms - last_seen_ts_ms) > suppression_window_ms then
+    return decision, reason
+  end
+
+  plugin_ctx.state_suppressed = true
+  return constants.DECISION_ALLOW, constants.REASON_INVARIANT_OK
+end
+
+local function persist_last_seen(conf, plugin_ctx, actual_version, now_ts_ms)
+  local should_persist, _ = should_apply_state_suppression(conf)
+  if not should_persist then
+    return
+  end
+
+  if type(actual_version) ~= "string" then
+    return
+  end
+
+  local store = plugin_ctx.state_store
+  local subject_key = plugin_ctx.state_subject_key
+  if store == nil or subject_key == nil then
+    return
+  end
+
+  plugin_ctx.state_store_write_ok = store:set_last_seen(subject_key, actual_version, now_ts_ms) == true
 end
 
 local function emit_violation_warning(decision_ctx)
@@ -110,6 +214,8 @@ function VersionGateHandler:access(conf)
   local service_id = get_service_id()
   local resolved_policy = policy.resolve_policy(conf, route_id, service_id)
   plugin_ctx.policy = resolved_policy
+  plugin_ctx.state_store = state_store.new(conf)
+  plugin_ctx.state_subject_key = get_state_subject_key(conf, route_id, service_id)
 
   ctx.init_request_state(plugin_ctx, {
     policy_id = resolved_policy.id,
@@ -121,9 +227,15 @@ function VersionGateHandler:access(conf)
     started_at = started_at,
   })
 
-  local expected_header = kong.request.get_header(conf.expected_header_name)
-  local expected_version, expected_parse_reason = version_extractor.get_expected_version(expected_header)
-  ctx.set_expected(plugin_ctx, expected_header, expected_version, expected_parse_reason)
+  local request_ctx = {
+    request = kong.request,
+    kong_ctx = kong.ctx,
+    ngx_ctx = ngx and ngx.ctx or nil,
+  }
+  local expected_raw = version_extractor.get_expected_raw(conf, request_ctx)
+  local expected_version, expected_parse_reason =
+    version_extractor.parse_version(expected_raw, constants.REASON_PARSE_ERROR_EXPECTED)
+  ctx.set_expected(plugin_ctx, expected_raw, expected_version, expected_parse_reason)
 end
 
 function VersionGateHandler:header_filter(conf)
@@ -135,11 +247,25 @@ function VersionGateHandler:header_filter(conf)
   plugin_ctx.phase = "header_filter"
   local expected_version = plugin_ctx.expected_version
   local expected_parse_reason = plugin_ctx.expected_parse_reason
+  if plugin_ctx.state_store == nil then
+    plugin_ctx.state_store = state_store.new(conf)
+  end
+  if plugin_ctx.state_subject_key == nil then
+    plugin_ctx.state_subject_key = get_state_subject_key(conf, plugin_ctx.route_id, plugin_ctx.service_id)
+  end
 
-  local actual_header = kong.response.get_header(conf.actual_header_name)
-  local actual_version, actual_parse_reason = version_extractor.get_actual_version(actual_header)
-  ctx.set_actual(plugin_ctx, actual_header, actual_version, actual_parse_reason)
+  local response_ctx = {
+    request = kong.request,
+    response = kong.response,
+    kong_ctx = kong.ctx,
+    ngx_ctx = ngx and ngx.ctx or nil,
+  }
+  local actual_raw = version_extractor.get_actual_raw(conf, response_ctx)
+  local actual_version, actual_parse_reason =
+    version_extractor.parse_version(actual_raw, constants.REASON_PARSE_ERROR_ACTUAL)
+  ctx.set_actual(plugin_ctx, actual_raw, actual_version, actual_parse_reason)
 
+  local now_ts_ms = now_ms()
   local decision, reason = decision_engine.classify(
     expected_version,
     actual_version,
@@ -147,7 +273,16 @@ function VersionGateHandler:header_filter(conf)
     actual_parse_reason,
     plugin_ctx.policy
   )
+  decision, reason = maybe_suppress_violation(
+    conf,
+    plugin_ctx,
+    decision,
+    reason,
+    expected_version,
+    now_ts_ms
+  )
   ctx.set_decision(plugin_ctx, decision, reason)
+  persist_last_seen(conf, plugin_ctx, actual_version, now_ts_ms)
 
   local decision_ctx = ctx.snapshot(plugin_ctx)
   local enforcement_result = enforcement.handle(conf, decision_ctx, plugin_ctx.policy)
