@@ -160,30 +160,30 @@ end
 ---@param conf table|nil
 ---@return string|nil, number|nil
 function _M.get_last_seen(subject_key, conf)
-  subject_key = normalize_subject_key(subject_key)
-  if subject_key == nil then
+  local normalized_subject_key = normalize_subject_key(subject_key)
+  if normalized_subject_key == nil then
     return nil, nil
   end
 
   local adapter = resolve_adapter(conf)
-  local version, ts_ms = adapter_get(adapter, subject_key, conf)
+  local version, ts_ms = adapter_get(adapter, normalized_subject_key, conf)
   if version ~= nil or ts_ms ~= nil then
     return version, ts_ms
   end
 
   local dict = resolve_dict(conf)
-  return dict_get(dict, subject_key)
+  return dict_get(dict, normalized_subject_key)
 end
 
 ---Stores the last-seen version and timestamp for a subject key.
 ---@param subject_key string
 ---@param version string
----@param ts_ms number
+---@param ts_ms number|string
 ---@param conf table|nil
 ---@return boolean
 function _M.set_last_seen(subject_key, version, ts_ms, conf)
-  subject_key = normalize_subject_key(subject_key)
-  if subject_key == nil then
+  local normalized_subject_key = normalize_subject_key(subject_key)
+  if normalized_subject_key == nil then
     return false
   end
 
@@ -191,19 +191,19 @@ function _M.set_last_seen(subject_key, version, ts_ms, conf)
     return false
   end
 
-  ts_ms = tonumber(ts_ms)
-  if ts_ms == nil then
+  local parsed_ts_ms = tonumber(ts_ms)
+  if parsed_ts_ms == nil then
     return false
   end
 
   local adapter = resolve_adapter(conf)
-  if adapter_set(adapter, subject_key, version, ts_ms, conf) then
+  if adapter_set(adapter, normalized_subject_key, version, parsed_ts_ms, conf) then
     return true
   end
 
   local dict = resolve_dict(conf)
   local ttl_sec = resolve_ttl(conf)
-  return dict_set(dict, subject_key, version, ts_ms, ttl_sec)
+  return dict_set(dict, normalized_subject_key, version, parsed_ts_ms, ttl_sec)
 end
 
 ---Binds store operations to a config table for request lifecycle usage.

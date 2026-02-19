@@ -255,7 +255,7 @@ function _M.get_last_seen(arg1, arg2, arg3)
   end
 
   local red, options = connect(conf)
-  if red == nil then
+  if red == nil or options == nil then
     return nil, nil
   end
 
@@ -312,7 +312,7 @@ function _M.set_last_seen(arg1, arg2, arg3, arg4, arg5)
   end
 
   local red, options = connect(conf)
-  if red == nil then
+  if red == nil or options == nil then
     return false
   end
 
