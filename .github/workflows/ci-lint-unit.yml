@@ -27,7 +27,7 @@ jobs:
           luarocks install busted
 
       - name: Lint
-        run: luacheck .
+        run: luacheck --config .luacheckrc kong spec
 
       - name: Unit tests
         run: busted --run unit
