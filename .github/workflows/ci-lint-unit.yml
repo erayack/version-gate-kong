@@ -1,0 +1,33 @@
+name: CI Lint and Unit
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v11
+        with:
+          luaVersion: "5.1"
+
+      - name: Setup LuaRocks
+        uses: leafo/gh-actions-luarocks@v4
+
+      - name: Install tooling
+        run: |
+          luarocks install luacheck
+          luarocks install busted
+
+      - name: Lint
+        run: luacheck .
+
+      - name: Unit tests
+        run: busted --run unit
