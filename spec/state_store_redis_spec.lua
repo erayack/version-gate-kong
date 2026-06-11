@@ -23,50 +23,49 @@ describe("state_store_redis", function()
     package.loaded["kong.plugins.version-gate.state_store_redis"] = nil
   end)
 
-  it("reads and writes hash state with keepalive", function()
+  it("reads and writes last-seen state through Redis using configured connection options", function()
     _G.ngx = { null = {} }
 
-    local captured = {}
+    local state = {
+      ["custom-prefix:route:a"] = { version = "42", ts_ms = "1234" },
+    }
+    local expirations = {}
+    local connections = {}
+    local keepalives = {}
+
     package.loaded["resty.redis"] = {
       new = function()
         return {
           set_timeout = function(_, timeout_ms)
-            captured.timeout_ms = timeout_ms
+            connections.timeout_ms = timeout_ms
           end,
           connect = function(_, host, port)
-            captured.host = host
-            captured.port = port
+            connections[#connections + 1] = { host = host, port = port }
             return true
           end,
           select = function(_, db)
-            captured.db = db
+            connections.database = db
             return true
           end,
-          hmget = function(_, key, field_a, field_b)
-            captured.hmget = { key = key, field_a = field_a, field_b = field_b }
-            return { "42", "1234" }
+          hmget = function(_, key)
+            local stored = state[key] or {}
+            return { stored.version or _G.ngx.null, stored.ts_ms or _G.ngx.null }
           end,
-          hset = function(_, key, field_a, value_a, field_b, value_b)
-            captured.hset = captured.hset or {}
-            captured.hset[#captured.hset + 1] = {
-              key = key,
-              field_a = field_a,
-              value_a = value_a,
-              field_b = field_b,
-              value_b = value_b,
-            }
+          hset = function(_, key, ...)
+            state[key] = state[key] or {}
+            local args = { ... }
+            for i = 1, #args, 2 do
+              state[key][args[i]] = args[i + 1]
+            end
             return 1
           end,
           expire = function(_, key, ttl_sec)
-            captured.expire = { key = key, ttl_sec = ttl_sec }
+            expirations[key] = ttl_sec
             return 1
           end,
           set_keepalive = function(_, keepalive_ms, pool_size)
-            captured.keepalive = { keepalive_ms = keepalive_ms, pool_size = pool_size }
+            keepalives[#keepalives + 1] = { keepalive_ms = keepalive_ms, pool_size = pool_size }
             return true
-          end,
-          close = function()
-            captured.closed = true
           end,
         }
       end,
@@ -90,25 +89,14 @@ describe("state_store_redis", function()
     assert.equals("42", version)
     assert.equals(1234, ts_ms)
     assert.is_true(ok)
-    assert.equals(250, captured.timeout_ms)
-    assert.equals("127.0.0.1", captured.host)
-    assert.equals(6380, captured.port)
-    assert.equals(2, captured.db)
-    assert.equals("custom-prefix:route:a", captured.hmget.key)
-    assert.equals(2, #captured.hset)
-    assert.equals("custom-prefix:route:a", captured.hset[1].key)
-    assert.equals("version", captured.hset[1].field_a)
-    assert.equals("88", captured.hset[1].value_a)
-    assert.is_nil(captured.hset[1].field_b)
-    assert.equals("custom-prefix:route:a", captured.hset[2].key)
-    assert.equals("ts_ms", captured.hset[2].field_a)
-    assert.equals("5678", captured.hset[2].value_a)
-    assert.is_nil(captured.hset[2].field_b)
-    assert.equals("custom-prefix:route:a", captured.expire.key)
-    assert.equals(45, captured.expire.ttl_sec)
-    assert.equals(70000, captured.keepalive.keepalive_ms)
-    assert.equals(22, captured.keepalive.pool_size)
-    assert.is_nil(captured.closed)
+    assert.same({ version = "88", ts_ms = "5678" }, state["custom-prefix:route:a"])
+    assert.equals(45, expirations["custom-prefix:route:a"])
+    assert.equals("127.0.0.1", connections[1].host)
+    assert.equals(6380, connections[1].port)
+    assert.equals(2, connections.database)
+    assert.equals(250, connections.timeout_ms)
+    assert.equals(70000, keepalives[1].keepalive_ms)
+    assert.equals(22, keepalives[1].pool_size)
   end)
 
   it("supports env fallback and missing values", function()

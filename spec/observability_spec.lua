@@ -15,25 +15,25 @@ describe("observability", function()
     assert.equals("OK", event.reason)
   end)
 
-  it("routes violations to warn emitter", function()
-    local warn_called = false
-    local notice_called = false
+  it("routes violation payloads to warning logs", function()
+    local warning_payload
+    local notice_payload
 
     observability.emit(
       {},
       { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION },
       {
-        warn = function()
-          warn_called = true
+        warn = function(_, serialized)
+          warning_payload = serialized
         end,
-        notice = function()
-          notice_called = true
+        notice = function(_, serialized)
+          notice_payload = serialized
         end,
       }
     )
 
-    assert.is_true(warn_called)
-    assert.is_false(notice_called)
+    assert.matches("decision=VIOLATION", warning_payload)
+    assert.is_nil(notice_payload)
   end)
 
   it("serializes deterministic ordered fields with escaping", function()
@@ -79,8 +79,8 @@ describe("observability", function()
     assert.equals("legacy-policy", event.policy_id)
   end)
 
-  it("honors emit_sample_rate and skips emission when sample misses", function()
-    local notice_called = false
+  it("honors emit_sample_rate and leaves logs unchanged when sample misses", function()
+    local payload
 
     observability.emit(
       { emit_sample_rate = 0.1 },
@@ -89,13 +89,13 @@ describe("observability", function()
         random = function()
           return 0.9
         end,
-        notice = function()
-          notice_called = true
+        notice = function(_, serialized)
+          payload = serialized
         end,
       }
     )
 
-    assert.is_false(notice_called)
+    assert.is_nil(payload)
   end)
 
   it("emits json payload when emit_format=json", function()
