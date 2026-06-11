@@ -30,8 +30,10 @@ build = {
     ["kong.plugins.version-gate.invariant"] = "kong/plugins/version-gate/invariant.lua",
     ["kong.plugins.version-gate.observability"] = "kong/plugins/version-gate/observability.lua",
     ["kong.plugins.version-gate.policy"] = "kong/plugins/version-gate/policy.lua",
+    ["kong.plugins.version-gate.request_coordinator"] = "kong/plugins/version-gate/request_coordinator.lua",
     ["kong.plugins.version-gate.state_store"] = "kong/plugins/version-gate/state_store.lua",
     ["kong.plugins.version-gate.state_store_redis"] = "kong/plugins/version-gate/state_store_redis.lua",
+    ["kong.plugins.version-gate.state_suppression"] = "kong/plugins/version-gate/state_suppression.lua",
     ["kong.plugins.version-gate.version_extractor"] = "kong/plugins/version-gate/version_extractor.lua",
   },
 }

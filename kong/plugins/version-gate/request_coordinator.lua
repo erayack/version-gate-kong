@@ -2,77 +2,13 @@ local constants = require("kong.plugins.version-gate.constants")
 local ctx = require("kong.plugins.version-gate.ctx")
 local decision_engine = require("kong.plugins.version-gate.decision_engine")
 local enforcement = require("kong.plugins.version-gate.enforcement")
-local invariant = require("kong.plugins.version-gate.invariant")
 local observability = require("kong.plugins.version-gate.observability")
 local policy = require("kong.plugins.version-gate.policy")
 local state_store = require("kong.plugins.version-gate.state_store")
+local state_suppression = require("kong.plugins.version-gate.state_suppression")
 local version_extractor = require("kong.plugins.version-gate.version_extractor")
 
 local _M = {}
-
-local function should_apply_state_suppression(conf)
-  local suppression_window_ms = tonumber(conf and conf.state_suppression_window_ms)
-  if suppression_window_ms == nil or suppression_window_ms <= 0 then
-    return false, nil
-  end
-
-  return true, suppression_window_ms
-end
-
-local function maybe_suppress_violation(conf, plugin_ctx, decision, reason, expected_version, now_ts_ms)
-  if decision ~= constants.DECISION_VIOLATION or reason ~= constants.REASON_INVARIANT_VIOLATION then
-    return decision, reason
-  end
-
-  local should_suppress, suppression_window_ms = should_apply_state_suppression(conf)
-  if not should_suppress then
-    return decision, reason
-  end
-
-  local store = plugin_ctx.state_store
-  local subject_key = plugin_ctx.state_subject_key
-  if store == nil or subject_key == nil or expected_version == nil then
-    return decision, reason
-  end
-
-  local last_seen_version, last_seen_ts_ms = store:get_last_seen(subject_key)
-  plugin_ctx.last_seen_version = last_seen_version
-  plugin_ctx.last_seen_ts_ms = last_seen_ts_ms
-
-  if type(last_seen_version) ~= "string" or type(last_seen_ts_ms) ~= "number" then
-    return decision, reason
-  end
-
-  if invariant.is_violation(expected_version, last_seen_version) then
-    return decision, reason
-  end
-
-  if (now_ts_ms - last_seen_ts_ms) > suppression_window_ms then
-    return decision, reason
-  end
-
-  plugin_ctx.state_suppressed = true
-  return constants.DECISION_ALLOW, constants.REASON_INVARIANT_OK
-end
-
-local function persist_last_seen(conf, plugin_ctx, actual_version, now_ts_ms)
-  local should_persist, _ = should_apply_state_suppression(conf)
-  if not should_persist then
-    return
-  end
-
-  if type(actual_version) ~= "string" then
-    return
-  end
-
-  local store = plugin_ctx.state_store
-  local subject_key = plugin_ctx.state_subject_key
-  if store == nil or subject_key == nil then
-    return
-  end
-
-  plugin_ctx.state_store_write_ok = store:set_last_seen(subject_key, actual_version, now_ts_ms) == true
-end
 
 local function should_warn_violation(decision_ctx, resolved_policy)
   if decision_ctx.decision ~= constants.DECISION_VIOLATION then
@@ -170,16 +106,23 @@ function _M.header_filter(conf, plugin_ctx, runtime)
     actual_parse_reason,
     plugin_ctx.policy
   )
-  decision, reason = maybe_suppress_violation(
-    conf,
-    plugin_ctx,
-    decision,
-    reason,
-    expected_version,
-    runtime.now_ms
-  )
+  local suppression_result = state_suppression.apply({
+    conf = conf,
+    store = plugin_ctx.state_store,
+    subject_key = plugin_ctx.state_subject_key,
+    decision = decision,
+    reason = reason,
+    expected_version = expected_version,
+    actual_version = actual_version,
+    now_ts_ms = runtime.now_ms,
+  })
+  decision = suppression_result.decision
+  reason = suppression_result.reason
+  plugin_ctx.last_seen_version = suppression_result.last_seen_version
+  plugin_ctx.last_seen_ts_ms = suppression_result.last_seen_ts_ms
+  plugin_ctx.state_suppressed = suppression_result.state_suppressed
+  plugin_ctx.state_store_write_ok = suppression_result.state_store_write_ok
   ctx.set_decision(plugin_ctx, decision, reason)
-  persist_last_seen(conf, plugin_ctx, actual_version, runtime.now_ms)
 
   local decision_ctx = ctx.snapshot(plugin_ctx)
   local enforcement_result = enforcement.handle(conf, decision_ctx, plugin_ctx.policy)

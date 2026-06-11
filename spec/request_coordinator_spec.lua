@@ -95,7 +95,7 @@ describe("request_coordinator", function()
     assert.equals(constants.REASON_PARSE_ERROR_ACTUAL, plugin_ctx.reason)
   end)
 
-  it("downgrades fresh non-violating last-seen violations and persists actual state", function()
+  it("downgrades fresh non-violating last-seen violations without persisting violating actual state", function()
     local writes = {}
     package.loaded["spec.fixtures.version_gate_state_store"] = {
       get_last_seen = function()
@@ -122,8 +122,7 @@ describe("request_coordinator", function()
     assert.equals(constants.DECISION_ALLOW, plugin_ctx.decision)
     assert.equals(constants.REASON_INVARIANT_OK, plugin_ctx.reason)
     assert.is_true(plugin_ctx.state_suppressed)
-    assert.equals(1, #writes)
-    assert.equals("9", writes[1].version)
+    assert.equals(0, #writes)
     assert.equals(0, #warnings)
   end)
 

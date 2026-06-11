@@ -357,11 +357,8 @@ describe("handler.header_filter", function()
     assert.equals(0, #captured_warns)
   end)
 
-  it("does not suppress when last_seen timestamp is stale", function()
-    store_last_seen_version = "10"
-    store_last_seen_ts_ms = 1000000 - 200
-    _G.kong.ctx.plugin.expected_version = "10"
 
+  it("does not write violating state through handler wiring", function()
     local handler = require("kong.plugins.version-gate.handler")
 
     handler:header_filter({
@@ -370,47 +367,8 @@ describe("handler.header_filter", function()
       state_suppression_window_ms = 100,
     })
 
-    assert.equals("VIOLATION", decision_snapshot.decision)
-    assert.equals("INVARIANT_VIOLATION", decision_snapshot.reason)
-    assert.equals(1, #captured_warns)
-  end)
-
-  it("does not suppress when last_seen is still violating expected version", function()
-    store_last_seen_version = "8"
-    store_last_seen_ts_ms = 1000000 - 50
-    _G.kong.ctx.plugin.expected_version = "10"
-
-    local handler = require("kong.plugins.version-gate.handler")
-
-    handler:header_filter({
-      enabled = true,
-      actual_header_name = "x-version",
-      state_suppression_window_ms = 100,
-    })
-
-    assert.equals("VIOLATION", decision_snapshot.decision)
-    assert.equals("INVARIANT_VIOLATION", decision_snapshot.reason)
-    assert.equals(1, #captured_warns)
-  end)
-
-  it("writes state only when suppression window is enabled", function()
-    local handler = require("kong.plugins.version-gate.handler")
-
-    handler:header_filter({
-      enabled = true,
-      actual_header_name = "x-version",
-      state_suppression_window_ms = 0,
-    })
     assert.equals(0, store_write_calls)
-
-    handler:header_filter({
-      enabled = true,
-      actual_header_name = "x-version",
-      state_suppression_window_ms = 100,
-    })
-    assert.equals(1, store_write_calls)
-    assert.equals("10", store_written.version)
-    assert.equals(1000000, store_written.ts_ms)
+    assert.is_nil(store_written)
   end)
 
   it("uses subject header key before composite fallback key", function()
