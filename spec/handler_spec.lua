@@ -9,6 +9,7 @@ describe("handler.log", function()
     captured_conf = nil
 
     package.loaded["kong.plugins.version-gate.handler"] = nil
+    package.loaded["kong.plugins.version-gate.request_coordinator"] = nil
     package.loaded["kong.plugins.version-gate.observability"] = {
       emit = function(conf)
         captured_conf = conf
@@ -81,6 +82,7 @@ describe("handler.log", function()
     _G.kong = saved_kong
     _G.ngx = saved_ngx
     package.loaded["kong.plugins.version-gate.handler"] = nil
+    package.loaded["kong.plugins.version-gate.request_coordinator"] = nil
     package.loaded["kong.plugins.version-gate.observability"] = nil
     package.loaded["kong.plugins.version-gate.ctx"] = nil
     package.loaded["kong.plugins.version-gate.policy"] = nil
@@ -141,6 +143,7 @@ describe("handler.header_filter", function()
     actual_raw_calls = 0
 
     package.loaded["kong.plugins.version-gate.handler"] = nil
+    package.loaded["kong.plugins.version-gate.request_coordinator"] = nil
     package.loaded["kong.plugins.version-gate.ctx"] = {
       set_actual = function(_, _, parsed_value)
         decision_snapshot.actual_version = parsed_value
@@ -251,6 +254,7 @@ describe("handler.header_filter", function()
     _G.kong = saved_kong
     _G.ngx = saved_ngx
     package.loaded["kong.plugins.version-gate.handler"] = nil
+    package.loaded["kong.plugins.version-gate.request_coordinator"] = nil
     package.loaded["kong.plugins.version-gate.ctx"] = nil
     package.loaded["kong.plugins.version-gate.policy"] = nil
     package.loaded["kong.plugins.version-gate.decision_engine"] = nil
