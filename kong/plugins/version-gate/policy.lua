@@ -40,6 +40,34 @@ local function copy_array(values)
   return out
 end
 
+local function resolve_reject_status(value)
+  if type(value) == "number" then
+    return value
+  end
+  return 409
+end
+
+local function resolve_reject_template(value)
+  if value == "minimal" then
+    return "minimal"
+  end
+  return "default"
+end
+
+local function resolve_emit_include_versions(value)
+  if value == nil then
+    return true
+  end
+  return value == true
+end
+
+local function resolve_emit_format(value)
+  if value == "json" then
+    return "json"
+  end
+  return "logfmt"
+end
+
 local function default_policy(conf)
   conf = conf or {}
 
@@ -64,7 +92,11 @@ local function default_policy(conf)
     id = policy_id,
     mode = resolve_mode(conf),
     emit_sample_rate = emit_sample_rate,
+    emit_include_versions = resolve_emit_include_versions(conf.emit_include_versions),
+    emit_format = resolve_emit_format(conf.emit_format),
     enforce_on_reason = enforce_on_reason,
+    reject_status_code = resolve_reject_status(conf.reject_status_code),
+    reject_body_template = resolve_reject_template(conf.reject_body_template),
   }
 end
 
@@ -97,6 +129,14 @@ local function merge_policy(base, override)
   if type(merged.emit_sample_rate) ~= "number" then
     merged.emit_sample_rate = base.emit_sample_rate
   end
+
+  if type(merged.reject_status_code) ~= "number" then
+    merged.reject_status_code = base.reject_status_code
+  end
+
+  merged.reject_body_template = resolve_reject_template(merged.reject_body_template)
+  merged.emit_include_versions = resolve_emit_include_versions(merged.emit_include_versions)
+  merged.emit_format = resolve_emit_format(merged.emit_format)
 
   if not is_array(merged.enforce_on_reason) then
     merged.enforce_on_reason = copy_array(base.enforce_on_reason)

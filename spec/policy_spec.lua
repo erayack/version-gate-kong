@@ -8,6 +8,10 @@ describe("policy.resolve_policy", function()
     assert.equals("default", resolved.id)
     assert.equals("shadow", resolved.mode)
     assert.equals(1.0, resolved.emit_sample_rate)
+    assert.is_true(resolved.emit_include_versions)
+    assert.equals("logfmt", resolved.emit_format)
+    assert.equals(409, resolved.reject_status_code)
+    assert.equals("default", resolved.reject_body_template)
     assert.same({ constants.REASON_INVARIANT_VIOLATION }, resolved.enforce_on_reason)
   end)
 
@@ -16,15 +20,49 @@ describe("policy.resolve_policy", function()
       policy_id = "global",
       mode = "shadow",
       emit_sample_rate = 0.9,
+      emit_include_versions = true,
+      emit_format = "logfmt",
+      reject_status_code = 409,
+      reject_body_template = "default",
       policy_overrides = {
-        { target_type = "service", target_id = "svc", id = "svc-policy", mode = "annotate", emit_sample_rate = 0.4 },
-        { target_type = "route", target_id = "rte", id = "route-policy", mode = "reject", emit_sample_rate = 0.2 },
+        {
+          target_type = "service",
+          target_id = "svc",
+          id = "svc-policy",
+          mode = "annotate",
+          emit_sample_rate = 0.4,
+          emit_include_versions = true,
+          emit_format = "logfmt",
+          reject_status_code = 429,
+          reject_body_template = "minimal",
+        },
+        {
+          target_type = "route",
+          target_id = "rte",
+          id = "route-policy",
+          mode = "reject",
+          emit_sample_rate = 0.2,
+          emit_include_versions = false,
+          emit_format = "json",
+          reject_status_code = 451,
+          reject_body_template = "default",
+        },
       },
     }, "rte", "svc")
 
     assert.equals("route-policy", resolved.id)
     assert.equals("reject", resolved.mode)
     assert.equals(0.2, resolved.emit_sample_rate)
+    assert.is_false(resolved.emit_include_versions)
+    assert.equals("json", resolved.emit_format)
+    assert.equals(451, resolved.reject_status_code)
+    assert.equals("default", resolved.reject_body_template)
+  end)
+
+  it("keeps deprecated log_only=true compatibility in effective policy", function()
+    local resolved = policy.resolve_policy({ log_only = true }, nil, nil)
+
+    assert.equals("shadow", resolved.mode)
   end)
 
   it("copies enforce_on_reason arrays to avoid mutation aliasing", function()

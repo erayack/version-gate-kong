@@ -59,11 +59,11 @@ local function normalize_value(value)
   return string_value
 end
 
-local function should_emit(conf, random_fn)
-  conf = conf or {}
+local function should_emit(effective_policy, random_fn)
+  effective_policy = effective_policy or {}
   random_fn = random_fn or math.random
 
-  local sample_rate = conf.emit_sample_rate
+  local sample_rate = effective_policy.emit_sample_rate
   if type(sample_rate) ~= "number" then
     sample_rate = 1
   end
@@ -79,16 +79,16 @@ local function should_emit(conf, random_fn)
   return random_fn() <= sample_rate
 end
 
-local function include_versions(conf)
-  if conf == nil or conf.emit_include_versions == nil then
+local function include_versions(effective_policy)
+  if effective_policy == nil or effective_policy.emit_include_versions == nil then
     return true
   end
 
-  return conf.emit_include_versions == true
+  return effective_policy.emit_include_versions == true
 end
 
-local function resolve_emit_format(conf)
-  if conf ~= nil and conf.emit_format == "json" then
+local function resolve_emit_format(effective_policy)
+  if effective_policy ~= nil and effective_policy.emit_format == "json" then
     return "json"
   end
 
@@ -136,7 +136,7 @@ end
 
 ---Builds a standardized observability event payload.
 ---@param decision_ctx table|nil
----@param conf table|nil
+---@param conf table|nil effective policy or legacy config
 ---@return table
 function _M.build_event(decision_ctx, conf)
   decision_ctx = decision_ctx or {}
@@ -146,7 +146,7 @@ function _M.build_event(decision_ctx, conf)
   return {
     event_version = "1",
     plugin = "version-gate",
-    policy_id = decision_ctx.policy_id or conf.policy_id,
+    policy_id = decision_ctx.policy_id or conf.id or conf.policy_id,
     mode = decision_ctx.mode or conf.mode,
     phase = decision_ctx.phase,
     decision = decision_ctx.decision,
@@ -164,7 +164,7 @@ function _M.build_event(decision_ctx, conf)
 end
 
 ---Emits the observability event at a severity derived from decision.
----@param conf table|nil
+---@param conf table|nil effective policy or legacy config
 ---@param decision_ctx table|nil
 ---@param emitters table|nil
 ---@return nil

@@ -4,8 +4,8 @@ local enforcement = require("kong.plugins.version-gate.enforcement")
 describe("enforcement.handle", function()
   it("returns none action for shadow mode violations", function()
     local result = enforcement.handle(
-      { mode = "shadow" },
-      { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION }
+      { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION },
+      { mode = "shadow" }
     )
 
     assert.equals(constants.ACTION_NONE, result.action)
@@ -16,8 +16,8 @@ describe("enforcement.handle", function()
 
   it("returns annotate action with headers", function()
     local result = enforcement.handle(
-      { mode = "annotate" },
-      { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION }
+      { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION },
+      { mode = "annotate" }
     )
 
     assert.equals(constants.ACTION_ANNOTATE, result.action)
@@ -29,8 +29,8 @@ describe("enforcement.handle", function()
 
   it("returns reject action with defaults", function()
     local result = enforcement.handle(
-      { mode = "reject" },
-      { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION }
+      { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION },
+      { mode = "reject", reject_status_code = 409, reject_body_template = "default" }
     )
 
     assert.equals(constants.ACTION_REJECT, result.action)
@@ -40,18 +40,17 @@ describe("enforcement.handle", function()
     assert.equals("reject", result.headers[constants.HEADER_MODE])
   end)
 
-  it("uses policy override reject status when provided", function()
+  it("uses effective policy reject status when provided", function()
     local result = enforcement.handle(
-      { mode = "reject" },
       { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION },
-      { reject_status_code = 451 }
+      { mode = "reject", reject_status_code = 451 }
     )
 
     assert.equals(constants.ACTION_REJECT, result.action)
     assert.equals(451, result.status)
   end)
 
-  it("uses config reject status when policy override is absent", function()
+  it("keeps compatibility path using config reject status when policy is absent", function()
     local result = enforcement.handle(
       { mode = "reject", reject_status_code = 429 },
       { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION }
@@ -63,8 +62,8 @@ describe("enforcement.handle", function()
 
   it("uses configured reject body template", function()
     local result = enforcement.handle(
-      { mode = "reject", reject_body_template = "minimal" },
-      { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION }
+      { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION },
+      { mode = "reject", reject_body_template = "minimal" }
     )
 
     assert.equals(constants.ACTION_REJECT, result.action)
@@ -74,7 +73,7 @@ describe("enforcement.handle", function()
     assert.is_nil(result.body.decision)
   end)
 
-  it("uses policy reject body template override over config", function()
+  it("keeps compatibility path with policy reject body template over config", function()
     local result = enforcement.handle(
       { mode = "reject", reject_body_template = "default" },
       { decision = constants.DECISION_VIOLATION, reason = constants.REASON_INVARIANT_VIOLATION },
@@ -109,8 +108,8 @@ describe("enforcement.handle", function()
 
   it("returns none for allow decisions", function()
     local result = enforcement.handle(
-      { mode = "reject" },
-      { decision = constants.DECISION_ALLOW, reason = constants.REASON_INVARIANT_OK }
+      { decision = constants.DECISION_ALLOW, reason = constants.REASON_INVARIANT_OK },
+      { mode = "reject" }
     )
 
     assert.equals(constants.ACTION_NONE, result.action)
@@ -118,9 +117,8 @@ describe("enforcement.handle", function()
 
   it("returns none when reason is not configured for enforcement", function()
     local result = enforcement.handle(
-      { mode = "reject" },
       { decision = constants.DECISION_VIOLATION, reason = constants.REASON_MISSING_ACTUAL },
-      { enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION } }
+      { mode = "reject", enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION } }
     )
 
     assert.equals(constants.ACTION_NONE, result.action)

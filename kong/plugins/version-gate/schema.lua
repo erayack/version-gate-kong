@@ -105,6 +105,8 @@ return {
               { reject_status_code = { type = "integer", required = false, between = { 100, 599 } } },
               { reject_body_template = { type = "string", required = false, one_of = { "default", "minimal" } } },
               { emit_sample_rate = { type = "number", required = false, between = { 0, 1 } } },
+              { emit_include_versions = { type = "boolean", required = false } },
+              { emit_format = { type = "string", required = false, one_of = { "logfmt", "json" } } },
               { enforce_on_reason = { type = "array", required = false, elements = { type = "string" } } },
             },
           },

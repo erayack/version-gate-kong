@@ -2,10 +2,10 @@ local constants = require("kong.plugins.version-gate.constants")
 local observability = require("kong.plugins.version-gate.observability")
 
 describe("observability", function()
-  it("builds event with config fallbacks", function()
+  it("builds event with effective policy fallbacks", function()
     local event = observability.build_event(
       { decision = constants.DECISION_ALLOW, reason = "OK", phase = "log" },
-      { policy_id = "policy-default", mode = "shadow" }
+      { id = "policy-default", mode = "shadow" }
     )
 
     assert.equals("policy-default", event.policy_id)
@@ -68,6 +68,15 @@ describe("observability", function()
       " event_version=1 plugin=version-gate policy_id=policy-1 mode=shadow phase=log decision=ALLOW reason=INVARIANT_OK expected_version=42 actual_version=43 expected_version_raw=\"value with spaces\" actual_version_raw=\"x=\\\"1\\\"\\n\" request_id=req-1 route_id=route-1 service_id=service-1 started_at=1000 latency_ms=20",
       payload
     )
+  end)
+
+  it("keeps legacy policy_id config fallback", function()
+    local event = observability.build_event(
+      { decision = constants.DECISION_ALLOW, reason = "OK", phase = "log" },
+      { policy_id = "legacy-policy", mode = "shadow" }
+    )
+
+    assert.equals("legacy-policy", event.policy_id)
   end)
 
   it("honors emit_sample_rate and skips emission when sample misses", function()

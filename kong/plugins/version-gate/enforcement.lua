@@ -67,6 +67,14 @@ local function resolve_reject_status(conf, policy)
   return status
 end
 
+local function normalize_args(first, second, third)
+  if type(first) == "table" and first.decision ~= nil then
+    return {}, first, second or {}
+  end
+
+  return first or {}, second or {}, third or {}
+end
+
 local function build_annotation_headers(decision_ctx, mode)
   return {
     [constants.HEADER_DECISION] = tostring(decision_ctx.decision),
@@ -117,14 +125,14 @@ local function should_enforce_reason(policy, reason)
 end
 
 ---Handles enforcement for a version-gate decision.
+---Primary interface: handle(decision_ctx, effective_policy).
+---Compatibility interface: handle(conf, decision_ctx, policy).
 ---@param conf table|nil
 ---@param decision_ctx table|nil
 ---@param policy table|nil
 ---@return table
 function _M.handle(conf, decision_ctx, policy)
-  conf = conf or {}
-  decision_ctx = decision_ctx or {}
-  policy = policy or {}
+  conf, decision_ctx, policy = normalize_args(conf, decision_ctx, policy)
   local mode = resolve_mode(conf, decision_ctx, policy)
 
   local result = {

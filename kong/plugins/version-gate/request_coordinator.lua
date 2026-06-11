@@ -52,14 +52,6 @@ local function emit_violation_warning(decision_ctx, runtime)
   )
 end
 
-local function copy_conf(conf)
-  local copied = {}
-  for k, v in pairs(conf or {}) do
-    copied[k] = v
-  end
-  return copied
-end
-
 function _M.access(conf, plugin_ctx, runtime)
   runtime = runtime or {}
   plugin_ctx.policy = policy.resolve_policy(conf, runtime.route_id, runtime.service_id)
@@ -125,7 +117,7 @@ function _M.header_filter(conf, plugin_ctx, runtime)
   ctx.set_decision(plugin_ctx, decision, reason)
 
   local decision_ctx = ctx.snapshot(plugin_ctx)
-  local enforcement_result = enforcement.handle(conf, decision_ctx, plugin_ctx.policy)
+  local enforcement_result = enforcement.handle(decision_ctx, plugin_ctx.policy)
   if should_warn_violation(decision_ctx, plugin_ctx.policy) then
     emit_violation_warning(decision_ctx, runtime)
   end
@@ -140,12 +132,7 @@ function _M.log(conf, plugin_ctx, runtime)
     ctx.set_latency(plugin_ctx, runtime.now_ms - plugin_ctx.started_at)
   end
 
-  local emit_conf = copy_conf(conf)
-  if plugin_ctx.policy ~= nil and type(plugin_ctx.policy.emit_sample_rate) == "number" then
-    emit_conf.emit_sample_rate = plugin_ctx.policy.emit_sample_rate
-  end
-
-  observability.emit(emit_conf, ctx.snapshot(plugin_ctx), {
+  observability.emit(plugin_ctx.policy or policy.resolve_policy(conf), ctx.snapshot(plugin_ctx), {
     warn = runtime.warn,
     notice = runtime.notice,
   })
