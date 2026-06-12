@@ -65,6 +65,21 @@ describe("policy.resolve_policy", function()
     assert.equals("shadow", resolved.mode)
   end)
 
+  it("returns independent copies for cached default policies", function()
+    local conf = {
+      enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION },
+    }
+
+    local first = policy.resolve_policy(conf, nil, nil)
+    first.mode = "reject"
+    first.enforce_on_reason[1] = "CHANGED"
+
+    local second = policy.resolve_policy(conf, nil, nil)
+
+    assert.equals("shadow", second.mode)
+    assert.same({ constants.REASON_INVARIANT_VIOLATION }, second.enforce_on_reason)
+  end)
+
   it("copies enforce_on_reason arrays to avoid mutation aliasing", function()
     local conf = {
       enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION },

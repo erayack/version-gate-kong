@@ -56,6 +56,8 @@ describe("request_coordinator", function()
     local plugin_ctx = {}
 
     access(conf, plugin_ctx, "10")
+    assert.equals("default", plugin_ctx.policy_id)
+    assert.equals("shadow", plugin_ctx.mode)
     local result = header_filter(conf, plugin_ctx, "9", 1100, warnings)
 
     assert.equals(constants.DECISION_VIOLATION, plugin_ctx.decision)

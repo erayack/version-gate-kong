@@ -2,6 +2,10 @@ local constants = require("kong.plugins.version-gate.constants")
 
 local _M = {}
 
+local DEFAULT_ENFORCE_ON_REASON = { constants.REASON_INVARIANT_VIOLATION }
+local DEFAULT_POLICY_CACHE = setmetatable({}, { __mode = "k" })
+local NIL_CONF_CACHE_KEY = {}
+
 local function resolve_mode(conf)
   conf = conf or {}
 
@@ -73,7 +77,7 @@ local function default_policy(conf)
 
   local enforce_on_reason = conf.enforce_on_reason
   if not is_array(enforce_on_reason) then
-    enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION }
+    enforce_on_reason = DEFAULT_ENFORCE_ON_REASON
   else
     enforce_on_reason = copy_array(enforce_on_reason)
   end
@@ -98,6 +102,18 @@ local function default_policy(conf)
     reject_status_code = resolve_reject_status(conf.reject_status_code),
     reject_body_template = resolve_reject_template(conf.reject_body_template),
   }
+end
+
+local function copy_policy(policy)
+  local copied = {}
+  for k, v in pairs(policy) do
+    if k == "enforce_on_reason" and is_array(v) then
+      copied[k] = copy_array(v)
+    else
+      copied[k] = v
+    end
+  end
+  return copied
 end
 
 local function merge_policy(base, override)
@@ -188,9 +204,22 @@ end
 ---@param service_id string|nil
 ---@return table
 function _M.resolve_policy(conf, route_id, service_id)
-  local resolved = default_policy(conf)
+  local original_conf = conf
   conf = conf or {}
   local policy_overrides = conf.policy_overrides
+  if policy_overrides == nil then
+    local cache_key = original_conf or NIL_CONF_CACHE_KEY
+    local cached = DEFAULT_POLICY_CACHE[cache_key]
+    if cached ~= nil then
+      return copy_policy(cached)
+    end
+
+    cached = default_policy(conf)
+    DEFAULT_POLICY_CACHE[cache_key] = cached
+    return copy_policy(cached)
+  end
+
+  local resolved = default_policy(conf)
 
   if service_id ~= nil then
     resolved = merge_policy(resolved, find_override(policy_overrides, "service", service_id))

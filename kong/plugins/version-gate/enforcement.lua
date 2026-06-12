@@ -2,6 +2,13 @@ local constants = require("kong.plugins.version-gate.constants")
 
 local _M = {}
 
+local NO_ACTION_RESULT = {
+  action = constants.ACTION_NONE,
+  status = nil,
+  body = nil,
+  headers = nil,
+}
+
 local REJECT_BODY_TEMPLATES = {
   default = function(decision_ctx)
     return {
@@ -133,42 +140,39 @@ end
 ---@return table
 function _M.handle(conf, decision_ctx, policy)
   conf, decision_ctx, policy = normalize_args(conf, decision_ctx, policy)
-  local mode = resolve_mode(conf, decision_ctx, policy)
-
-  local result = {
-    action = constants.ACTION_NONE,
-    status = nil,
-    body = nil,
-    headers = nil,
-  }
 
   if decision_ctx.decision ~= constants.DECISION_VIOLATION then
-    return result
+    return NO_ACTION_RESULT
   end
 
   if not should_enforce_reason(policy, decision_ctx.reason) then
-    return result
+    return NO_ACTION_RESULT
   end
 
+  local mode = resolve_mode(conf, decision_ctx, policy)
   if not should_enforce_mode(mode) then
-    return result
+    return NO_ACTION_RESULT
   end
 
   if mode == "annotate" then
-    result.action = constants.ACTION_ANNOTATE
-    result.headers = build_annotation_headers(decision_ctx, mode)
-    return result
+    return {
+      action = constants.ACTION_ANNOTATE,
+      status = nil,
+      body = nil,
+      headers = build_annotation_headers(decision_ctx, mode),
+    }
   end
 
   if mode == "reject" then
-    result.action = constants.ACTION_REJECT
-    result.status = resolve_reject_status(conf, policy)
-    result.body = build_reject_body(conf, policy, decision_ctx)
-    result.headers = build_annotation_headers(decision_ctx, mode)
-    return result
+    return {
+      action = constants.ACTION_REJECT,
+      status = resolve_reject_status(conf, policy),
+      body = build_reject_body(conf, policy, decision_ctx),
+      headers = build_annotation_headers(decision_ctx, mode),
+    }
   end
 
-  return result
+  return NO_ACTION_RESULT
 end
 
 return _M

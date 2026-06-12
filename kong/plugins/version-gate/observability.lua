@@ -21,6 +21,12 @@ local EVENT_FIELDS = {
   "latency_ms",
 }
 
+local EVENT_JSON_FIELD_PREFIXES = {}
+for i = 1, #EVENT_FIELDS do
+  local field = EVENT_FIELDS[i]
+  EVENT_JSON_FIELD_PREFIXES[i] = "\"" .. field .. "\":"
+end
+
 local function escape_logfmt_quoted(value)
   return value
     :gsub("\\", "\\\\")
@@ -95,19 +101,6 @@ local function resolve_emit_format(effective_policy)
   return "logfmt"
 end
 
----Serializes an event table into logfmt-style key=value pairs.
----@param event table
----@return string
-local function serialize_event(event)
-  local parts = {}
-  for i = 1, #EVENT_FIELDS do
-    local field = EVENT_FIELDS[i]
-    parts[#parts + 1] = field .. "=" .. normalize_value(event[field])
-  end
-
-  return table.concat(parts, " ")
-end
-
 ---Serializes an event table to JSON with normalized fields.
 ---@param event table
 ---@return string|nil
@@ -128,10 +121,30 @@ local function serialize_event_json(event)
       encoded_value = "\"" .. escape_json_quoted(tostring(value)) .. "\""
     end
 
-    parts[#parts + 1] = "\"" .. field .. "\":" .. encoded_value
+    parts[#parts + 1] = EVENT_JSON_FIELD_PREFIXES[i] .. encoded_value
   end
 
   return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function serialize_decision_ctx_logfmt(decision_ctx, conf)
+  local should_include_versions = include_versions(conf)
+  return "event_version=1"
+    .. " plugin=version-gate"
+    .. " policy_id=" .. normalize_value(decision_ctx.policy_id or conf.id or conf.policy_id)
+    .. " mode=" .. normalize_value(decision_ctx.mode or conf.mode)
+    .. " phase=" .. normalize_value(decision_ctx.phase)
+    .. " decision=" .. normalize_value(decision_ctx.decision)
+    .. " reason=" .. normalize_value(decision_ctx.reason)
+    .. " expected_version=" .. normalize_value(should_include_versions and decision_ctx.expected_version or nil)
+    .. " actual_version=" .. normalize_value(should_include_versions and decision_ctx.actual_version or nil)
+    .. " expected_version_raw=" .. normalize_value(should_include_versions and decision_ctx.expected_version_raw or nil)
+    .. " actual_version_raw=" .. normalize_value(should_include_versions and decision_ctx.actual_version_raw or nil)
+    .. " request_id=" .. normalize_value(decision_ctx.request_id)
+    .. " route_id=" .. normalize_value(decision_ctx.route_id)
+    .. " service_id=" .. normalize_value(decision_ctx.service_id)
+    .. " started_at=" .. (decision_ctx.started_at ~= nil and tostring(decision_ctx.started_at) or "null")
+    .. " latency_ms=" .. (decision_ctx.latency_ms ~= nil and tostring(decision_ctx.latency_ms) or "null")
 end
 
 ---Builds a standardized observability event payload.
@@ -176,22 +189,20 @@ function _M.emit(conf, decision_ctx, emitters)
     return nil
   end
 
-  local event = _M.build_event(decision_ctx, conf)
+  decision_ctx = decision_ctx or {}
   local emit_warn = emitters.warn
   local emit_notice = emitters.notice
 
   local serialized_payload
   if resolve_emit_format(conf) == "json" then
-    serialized_payload = serialize_event_json(event)
-  end
-
-  if serialized_payload == nil then
-    serialized_payload = serialize_event(event)
+    serialized_payload = serialize_event_json(_M.build_event(decision_ctx, conf))
+  else
+    serialized_payload = serialize_decision_ctx_logfmt(decision_ctx, conf)
   end
 
   local serialized = " " .. serialized_payload
 
-  if event.decision == constants.DECISION_VIOLATION and emit_warn ~= nil then
+  if decision_ctx.decision == constants.DECISION_VIOLATION and emit_warn ~= nil then
     emit_warn("[version-gate] decision", serialized)
     return nil
   end

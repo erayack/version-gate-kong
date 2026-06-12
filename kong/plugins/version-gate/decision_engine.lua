@@ -24,8 +24,12 @@ function _M.classify(expected_version, actual_version, expected_parse_reason, ac
     return constants.DECISION_ALLOW, constants.REASON_MISSING_ACTUAL
   end
 
-  expected_version = tostring(expected_version)
-  actual_version = tostring(actual_version)
+  if type(expected_version) ~= "string" then
+    expected_version = tostring(expected_version)
+  end
+  if type(actual_version) ~= "string" then
+    actual_version = tostring(actual_version)
+  end
 
   if invariant.is_violation(expected_version, actual_version) then
     return constants.DECISION_VIOLATION, constants.REASON_INVARIANT_VIOLATION

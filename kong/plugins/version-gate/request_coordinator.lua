@@ -1,5 +1,4 @@
 local constants = require("kong.plugins.version-gate.constants")
-local ctx = require("kong.plugins.version-gate.ctx")
 local decision_engine = require("kong.plugins.version-gate.decision_engine")
 local enforcement = require("kong.plugins.version-gate.enforcement")
 local observability = require("kong.plugins.version-gate.observability")
@@ -9,6 +8,11 @@ local state_suppression = require("kong.plugins.version-gate.state_suppression")
 local version_extractor = require("kong.plugins.version-gate.version_extractor")
 
 local _M = {}
+
+local function state_suppression_enabled(conf)
+  local window_ms = tonumber(conf and conf.state_suppression_window_ms)
+  return window_ms ~= nil and window_ms > 0
+end
 
 local function should_warn_violation(decision_ctx, resolved_policy)
   if decision_ctx.decision ~= constants.DECISION_VIOLATION then
@@ -54,24 +58,39 @@ end
 
 function _M.access(conf, plugin_ctx, runtime)
   runtime = runtime or {}
-  plugin_ctx.policy = policy.resolve_policy(conf, runtime.route_id, runtime.service_id)
-  plugin_ctx.state_store = state_store.new(conf)
-  plugin_ctx.state_subject_key = runtime.state_subject_key
+  local resolved_policy = policy.resolve_policy(conf, runtime.route_id, runtime.service_id)
+  plugin_ctx.policy = resolved_policy
+  local suppression_enabled = state_suppression_enabled(conf)
+  if suppression_enabled then
+    plugin_ctx.state_store = state_store.new(conf)
+    plugin_ctx.state_subject_key = runtime.state_subject_key
+  else
+    plugin_ctx.state_store = nil
+    plugin_ctx.state_subject_key = nil
+  end
 
-  ctx.init_request_state(plugin_ctx, {
-    policy_id = plugin_ctx.policy.id,
-    mode = plugin_ctx.policy.mode,
-    phase = "access",
-    request_id = runtime.request_id,
-    route_id = runtime.route_id,
-    service_id = runtime.service_id,
-    started_at = runtime.now_ms,
-  })
+  plugin_ctx.expected_version = nil
+  plugin_ctx.actual_version = nil
+  plugin_ctx.expected_version_raw = nil
+  plugin_ctx.actual_version_raw = nil
+  plugin_ctx.expected_parse_reason = nil
+  plugin_ctx.decision = constants.DECISION_ALLOW
+  plugin_ctx.reason = constants.REASON_INVARIANT_OK
+  plugin_ctx.policy_id = resolved_policy.id
+  plugin_ctx.mode = resolved_policy.mode
+  plugin_ctx.phase = "access"
+  plugin_ctx.request_id = runtime.request_id
+  plugin_ctx.route_id = runtime.route_id
+  plugin_ctx.service_id = runtime.service_id
+  plugin_ctx.started_at = runtime.now_ms
+  plugin_ctx.latency_ms = nil
 
   local expected_raw = version_extractor.get_expected_raw(conf, runtime.request_ctx)
   local expected_version, expected_parse_reason =
     version_extractor.parse_version(expected_raw, constants.REASON_PARSE_ERROR_EXPECTED)
-  ctx.set_expected(plugin_ctx, expected_raw, expected_version, expected_parse_reason)
+  plugin_ctx.expected_version_raw = expected_raw
+  plugin_ctx.expected_version = expected_version
+  plugin_ctx.expected_parse_reason = expected_parse_reason
 end
 
 function _M.header_filter(conf, plugin_ctx, runtime)
@@ -79,17 +98,21 @@ function _M.header_filter(conf, plugin_ctx, runtime)
   plugin_ctx.phase = "header_filter"
   local expected_version = plugin_ctx.expected_version
   local expected_parse_reason = plugin_ctx.expected_parse_reason
-  if plugin_ctx.state_store == nil then
-    plugin_ctx.state_store = state_store.new(conf)
-  end
-  if plugin_ctx.state_subject_key == nil then
-    plugin_ctx.state_subject_key = runtime.state_subject_key
+  local suppression_enabled = state_suppression_enabled(conf)
+  if suppression_enabled then
+    if plugin_ctx.state_store == nil then
+      plugin_ctx.state_store = state_store.new(conf)
+    end
+    if plugin_ctx.state_subject_key == nil then
+      plugin_ctx.state_subject_key = runtime.state_subject_key
+    end
   end
 
   local actual_raw = version_extractor.get_actual_raw(conf, runtime.response_ctx)
   local actual_version, actual_parse_reason =
     version_extractor.parse_version(actual_raw, constants.REASON_PARSE_ERROR_ACTUAL)
-  ctx.set_actual(plugin_ctx, actual_raw, actual_version, actual_parse_reason)
+  plugin_ctx.actual_version_raw = actual_raw
+  plugin_ctx.actual_version = actual_version
 
   local decision, reason = decision_engine.classify(
     expected_version,
@@ -98,30 +121,36 @@ function _M.header_filter(conf, plugin_ctx, runtime)
     actual_parse_reason,
     plugin_ctx.policy
   )
-  local suppression_result = state_suppression.apply({
-    conf = conf,
-    store = plugin_ctx.state_store,
-    subject_key = plugin_ctx.state_subject_key,
-    decision = decision,
-    reason = reason,
-    expected_version = expected_version,
-    actual_version = actual_version,
-    now_ts_ms = runtime.now_ms,
-  })
-  decision = suppression_result.decision
-  reason = suppression_result.reason
-  plugin_ctx.last_seen_version = suppression_result.last_seen_version
-  plugin_ctx.last_seen_ts_ms = suppression_result.last_seen_ts_ms
-  plugin_ctx.state_suppressed = suppression_result.state_suppressed
-  plugin_ctx.state_store_write_ok = suppression_result.state_store_write_ok
-  ctx.set_decision(plugin_ctx, decision, reason)
-
-  local decision_ctx = ctx.snapshot(plugin_ctx)
-  local enforcement_result = enforcement.handle(decision_ctx, plugin_ctx.policy)
-  if should_warn_violation(decision_ctx, plugin_ctx.policy) then
-    emit_violation_warning(decision_ctx, runtime)
+  if suppression_enabled then
+    local suppression_result = state_suppression.apply({
+      conf = conf,
+      store = plugin_ctx.state_store,
+      subject_key = plugin_ctx.state_subject_key,
+      decision = decision,
+      reason = reason,
+      expected_version = expected_version,
+      actual_version = actual_version,
+      now_ts_ms = runtime.now_ms,
+    })
+    decision = suppression_result.decision
+    reason = suppression_result.reason
+    plugin_ctx.last_seen_version = suppression_result.last_seen_version
+    plugin_ctx.last_seen_ts_ms = suppression_result.last_seen_ts_ms
+    plugin_ctx.state_suppressed = suppression_result.state_suppressed
+    plugin_ctx.state_store_write_ok = suppression_result.state_store_write_ok
   end
-  return enforcement_result
+  plugin_ctx.decision = decision
+  plugin_ctx.reason = reason
+
+  if decision == constants.DECISION_VIOLATION then
+    local enforcement_result = enforcement.handle(plugin_ctx, plugin_ctx.policy)
+    if should_warn_violation(plugin_ctx, plugin_ctx.policy) then
+      emit_violation_warning(plugin_ctx, runtime)
+    end
+    return enforcement_result
+  end
+
+  return nil
 end
 
 function _M.log(conf, plugin_ctx, runtime)
@@ -129,13 +158,10 @@ function _M.log(conf, plugin_ctx, runtime)
   plugin_ctx.phase = "log"
 
   if plugin_ctx.started_at ~= nil then
-    ctx.set_latency(plugin_ctx, runtime.now_ms - plugin_ctx.started_at)
+    plugin_ctx.latency_ms = runtime.now_ms - plugin_ctx.started_at
   end
 
-  observability.emit(plugin_ctx.policy or policy.resolve_policy(conf), ctx.snapshot(plugin_ctx), {
-    warn = runtime.warn,
-    notice = runtime.notice,
-  })
+  observability.emit(plugin_ctx.policy or policy.resolve_policy(conf), plugin_ctx, runtime)
 end
 
 return _M
