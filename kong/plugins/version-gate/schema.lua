@@ -2,6 +2,13 @@ local typedefs = require("kong.db.schema.typedefs")
 local constants = require("kong.plugins.version-gate.constants")
 
 local SOURCE_STRATEGIES = { "header", "query", "jwt_claim", "cookie" }
+local ENFORCE_ON_REASONS = {
+  constants.REASON_INVARIANT_VIOLATION,
+  constants.REASON_MISSING_EXPECTED,
+  constants.REASON_MISSING_ACTUAL,
+  constants.REASON_PARSE_ERROR_EXPECTED,
+  constants.REASON_PARSE_ERROR_ACTUAL,
+}
 
 local function validate_non_empty_name(value)
   if type(value) ~= "string" or value:match("^%s*$") then
@@ -90,7 +97,7 @@ return {
           type = "array",
           required = true,
           default = { constants.REASON_INVARIANT_VIOLATION },
-          elements = { type = "string" },
+          elements = { type = "string", one_of = ENFORCE_ON_REASONS },
         } },
         { policy_overrides = {
           type = "array",
@@ -107,7 +114,7 @@ return {
               { emit_sample_rate = { type = "number", required = false, between = { 0, 1 } } },
               { emit_include_versions = { type = "boolean", required = false } },
               { emit_format = { type = "string", required = false, one_of = { "logfmt", "json" } } },
-              { enforce_on_reason = { type = "array", required = false, elements = { type = "string" } } },
+              { enforce_on_reason = { type = "array", required = false, elements = { type = "string", one_of = ENFORCE_ON_REASONS } } },
             },
           },
         } },

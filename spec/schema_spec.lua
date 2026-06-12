@@ -4,6 +4,7 @@ package.loaded["kong.db.schema.typedefs"] = {
 }
 
 local schema = require("kong.plugins.version-gate.schema")
+local constants = require("kong.plugins.version-gate.constants")
 
 local function config_fields()
   for _, root_field in ipairs(schema.fields) do
@@ -223,6 +224,29 @@ describe("schema", function()
           target_type = "route",
           target_id = "123e4567-e89b-12d3-a456-426614174000",
           enforce_on_reason = { 123 },
+        },
+      },
+    }))
+    assert.is_nil(ok)
+    assert.matches("enforce_on_reason", err)
+  end)
+
+  -- Regression: enforce_on_reason is a public reject-policy API. Typos must be
+  -- rejected at schema time rather than silently disabling enforcement.
+  it("rejects unsupported enforce_on_reason values", function()
+    local ok, err = validate_config(valid_config({ enforce_on_reason = { "INVARIANT_VIOLATOIN" } }))
+    assert.is_nil(ok)
+    assert.matches("enforce_on_reason", err)
+
+    ok, err = validate_config(valid_config({ enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION } }))
+    assert.is_true(ok, err)
+
+    ok, err = validate_config(valid_config({
+      policy_overrides = {
+        {
+          target_type = "route",
+          target_id = "123e4567-e89b-12d3-a456-426614174000",
+          enforce_on_reason = { "MISSING_ACTAUL" },
         },
       },
     }))
