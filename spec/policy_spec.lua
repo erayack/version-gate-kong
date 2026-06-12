@@ -111,6 +111,22 @@ describe("policy.resolve_policy", function()
     assert.same({ constants.REASON_MISSING_ACTUAL }, resolved.enforce_on_reason)
   end)
 
+  -- Regression: invalid enforce_on_reason tables must not be cached by identity,
+  -- because in-place schema/lifecycle updates can later make the same table valid.
+  it("recomputes cached default policies when enforce_on_reason becomes a valid array in place", function()
+    local reasons = { named_reason = constants.REASON_MISSING_ACTUAL }
+    local conf = {
+      enforce_on_reason = reasons,
+    }
+
+    assert.same({ constants.REASON_INVARIANT_VIOLATION }, policy.resolve_policy(conf, nil, nil).enforce_on_reason)
+
+    reasons.named_reason = nil
+    reasons[1] = constants.REASON_MISSING_ACTUAL
+
+    assert.same({ constants.REASON_MISSING_ACTUAL }, policy.resolve_policy(conf, nil, nil).enforce_on_reason)
+  end)
+
   it("copies enforce_on_reason arrays to avoid mutation aliasing", function()
     local conf = {
       enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION },

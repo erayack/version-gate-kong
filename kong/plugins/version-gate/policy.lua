@@ -66,6 +66,19 @@ local function same_array(left, right)
   return true
 end
 
+local function cached_enforce_on_reason_matches(cached, enforce_on_reason)
+  local current_is_array = is_array(enforce_on_reason)
+  if cached.enforce_on_reason_is_array ~= current_is_array then
+    return false
+  end
+
+  if not current_is_array then
+    return true
+  end
+
+  return same_array(cached.enforce_on_reason, enforce_on_reason)
+end
+
 local function config_matches_cached_entry(conf, cached)
   return cached.policy_id == conf.policy_id
     and cached.mode == conf.mode
@@ -75,13 +88,16 @@ local function config_matches_cached_entry(conf, cached)
     and cached.emit_format == conf.emit_format
     and cached.reject_status_code == conf.reject_status_code
     and cached.reject_body_template == conf.reject_body_template
-    and same_array(cached.enforce_on_reason, conf.enforce_on_reason)
+    and cached_enforce_on_reason_matches(cached, conf.enforce_on_reason)
 end
 
 local function cache_entry(conf, resolved_policy)
   local enforce_on_reason = conf.enforce_on_reason
-  if is_array(enforce_on_reason) then
+  local enforce_on_reason_is_array = is_array(enforce_on_reason)
+  if enforce_on_reason_is_array then
     enforce_on_reason = copy_array(enforce_on_reason)
+  else
+    enforce_on_reason = nil
   end
 
   return {
@@ -93,6 +109,7 @@ local function cache_entry(conf, resolved_policy)
     emit_format = conf.emit_format,
     reject_status_code = conf.reject_status_code,
     reject_body_template = conf.reject_body_template,
+    enforce_on_reason_is_array = enforce_on_reason_is_array,
     enforce_on_reason = enforce_on_reason,
     policy = resolved_policy,
   }
