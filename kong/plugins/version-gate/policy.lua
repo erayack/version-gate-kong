@@ -5,6 +5,7 @@ local _M = {}
 local DEFAULT_ENFORCE_ON_REASON = { constants.REASON_INVARIANT_VIOLATION }
 local DEFAULT_POLICY_CACHE = setmetatable({}, { __mode = "k" })
 local NIL_CONF_CACHE_KEY = {}
+local SIGNATURE_SEPARATOR = "\31"
 
 local function resolve_mode(conf)
   conf = conf or {}
@@ -42,6 +43,43 @@ local function copy_array(values)
     out[i] = values[i]
   end
   return out
+end
+
+local function signature_scalar(value)
+  if value == nil then
+    return "nil"
+  end
+
+  local string_value = tostring(value)
+  return type(value) .. ":" .. #string_value .. ":" .. string_value
+end
+
+local function signature_array(values)
+  if not is_array(values) then
+    return signature_scalar(values)
+  end
+
+  local parts = { "array", tostring(#values) }
+  for i = 1, #values do
+    parts[#parts + 1] = signature_scalar(values[i])
+  end
+
+  return table.concat(parts, SIGNATURE_SEPARATOR)
+end
+
+local function default_policy_signature(conf)
+  conf = conf or {}
+  return table.concat({
+    signature_scalar(conf.policy_id),
+    signature_scalar(conf.mode),
+    signature_scalar(conf.log_only),
+    signature_scalar(conf.emit_sample_rate),
+    signature_scalar(conf.emit_include_versions),
+    signature_scalar(conf.emit_format),
+    signature_scalar(conf.reject_status_code),
+    signature_scalar(conf.reject_body_template),
+    signature_array(conf.enforce_on_reason),
+  }, SIGNATURE_SEPARATOR)
 end
 
 local function resolve_reject_status(value)
@@ -209,14 +247,18 @@ function _M.resolve_policy(conf, route_id, service_id)
   local policy_overrides = conf.policy_overrides
   if policy_overrides == nil then
     local cache_key = original_conf or NIL_CONF_CACHE_KEY
+    local signature = default_policy_signature(conf)
     local cached = DEFAULT_POLICY_CACHE[cache_key]
-    if cached ~= nil then
-      return copy_policy(cached)
+    if cached ~= nil and cached.signature == signature then
+      return copy_policy(cached.policy)
     end
 
-    cached = default_policy(conf)
-    DEFAULT_POLICY_CACHE[cache_key] = cached
-    return copy_policy(cached)
+    local resolved_default = default_policy(conf)
+    DEFAULT_POLICY_CACHE[cache_key] = {
+      signature = signature,
+      policy = resolved_default,
+    }
+    return copy_policy(resolved_default)
   end
 
   local resolved = default_policy(conf)

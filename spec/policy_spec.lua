@@ -80,6 +80,37 @@ describe("policy.resolve_policy", function()
     assert.same({ constants.REASON_INVARIANT_VIOLATION }, second.enforce_on_reason)
   end)
 
+  -- Regression: the no-overrides policy cache served stale public plugin
+  -- config after in-place updates; cache reuse is now guarded by a field signature.
+  it("recomputes cached default policies when plugin config changes", function()
+    local conf = {
+      mode = "shadow",
+      reject_status_code = 409,
+      reject_body_template = "default",
+      emit_format = "logfmt",
+      emit_include_versions = true,
+      enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION },
+    }
+
+    assert.equals("shadow", policy.resolve_policy(conf, nil, nil).mode)
+
+    conf.mode = "reject"
+    conf.reject_status_code = 451
+    conf.reject_body_template = "minimal"
+    conf.emit_format = "json"
+    conf.emit_include_versions = false
+    conf.enforce_on_reason = { constants.REASON_MISSING_ACTUAL }
+
+    local resolved = policy.resolve_policy(conf, nil, nil)
+
+    assert.equals("reject", resolved.mode)
+    assert.equals(451, resolved.reject_status_code)
+    assert.equals("minimal", resolved.reject_body_template)
+    assert.equals("json", resolved.emit_format)
+    assert.is_false(resolved.emit_include_versions)
+    assert.same({ constants.REASON_MISSING_ACTUAL }, resolved.enforce_on_reason)
+  end)
+
   it("copies enforce_on_reason arrays to avoid mutation aliasing", function()
     local conf = {
       enforce_on_reason = { constants.REASON_INVARIANT_VIOLATION },
