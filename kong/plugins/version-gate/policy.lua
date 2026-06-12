@@ -5,7 +5,6 @@ local _M = {}
 local DEFAULT_ENFORCE_ON_REASON = { constants.REASON_INVARIANT_VIOLATION }
 local DEFAULT_POLICY_CACHE = setmetatable({}, { __mode = "k" })
 local NIL_CONF_CACHE_KEY = {}
-local SIGNATURE_SEPARATOR = "\31"
 
 local function resolve_mode(conf)
   conf = conf or {}
@@ -45,41 +44,58 @@ local function copy_array(values)
   return out
 end
 
-local function signature_scalar(value)
-  if value == nil then
-    return "nil"
+local function same_array(left, right)
+  if left == right then
+    return true
   end
 
-  local string_value = tostring(value)
-  return type(value) .. ":" .. #string_value .. ":" .. string_value
+  if not is_array(left) or not is_array(right) then
+    return false
+  end
+
+  if #left ~= #right then
+    return false
+  end
+
+  for i = 1, #left do
+    if left[i] ~= right[i] then
+      return false
+    end
+  end
+
+  return true
 end
 
-local function signature_array(values)
-  if not is_array(values) then
-    return signature_scalar(values)
-  end
-
-  local parts = { "array", tostring(#values) }
-  for i = 1, #values do
-    parts[#parts + 1] = signature_scalar(values[i])
-  end
-
-  return table.concat(parts, SIGNATURE_SEPARATOR)
+local function config_matches_cached_entry(conf, cached)
+  return cached.policy_id == conf.policy_id
+    and cached.mode == conf.mode
+    and cached.log_only == conf.log_only
+    and cached.emit_sample_rate == conf.emit_sample_rate
+    and cached.emit_include_versions == conf.emit_include_versions
+    and cached.emit_format == conf.emit_format
+    and cached.reject_status_code == conf.reject_status_code
+    and cached.reject_body_template == conf.reject_body_template
+    and same_array(cached.enforce_on_reason, conf.enforce_on_reason)
 end
 
-local function default_policy_signature(conf)
-  conf = conf or {}
-  return table.concat({
-    signature_scalar(conf.policy_id),
-    signature_scalar(conf.mode),
-    signature_scalar(conf.log_only),
-    signature_scalar(conf.emit_sample_rate),
-    signature_scalar(conf.emit_include_versions),
-    signature_scalar(conf.emit_format),
-    signature_scalar(conf.reject_status_code),
-    signature_scalar(conf.reject_body_template),
-    signature_array(conf.enforce_on_reason),
-  }, SIGNATURE_SEPARATOR)
+local function cache_entry(conf, resolved_policy)
+  local enforce_on_reason = conf.enforce_on_reason
+  if is_array(enforce_on_reason) then
+    enforce_on_reason = copy_array(enforce_on_reason)
+  end
+
+  return {
+    policy_id = conf.policy_id,
+    mode = conf.mode,
+    log_only = conf.log_only,
+    emit_sample_rate = conf.emit_sample_rate,
+    emit_include_versions = conf.emit_include_versions,
+    emit_format = conf.emit_format,
+    reject_status_code = conf.reject_status_code,
+    reject_body_template = conf.reject_body_template,
+    enforce_on_reason = enforce_on_reason,
+    policy = resolved_policy,
+  }
 end
 
 local function resolve_reject_status(value)
@@ -247,17 +263,13 @@ function _M.resolve_policy(conf, route_id, service_id)
   local policy_overrides = conf.policy_overrides
   if policy_overrides == nil then
     local cache_key = original_conf or NIL_CONF_CACHE_KEY
-    local signature = default_policy_signature(conf)
     local cached = DEFAULT_POLICY_CACHE[cache_key]
-    if cached ~= nil and cached.signature == signature then
+    if cached ~= nil and config_matches_cached_entry(conf, cached) then
       return copy_policy(cached.policy)
     end
 
     local resolved_default = default_policy(conf)
-    DEFAULT_POLICY_CACHE[cache_key] = {
-      signature = signature,
-      policy = resolved_default,
-    }
+    DEFAULT_POLICY_CACHE[cache_key] = cache_entry(conf, resolved_default)
     return copy_policy(resolved_default)
   end
 
